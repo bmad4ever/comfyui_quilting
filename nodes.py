@@ -228,7 +228,7 @@ class LatentQuilting:
 
         # if single
         src = src[0].cpu().numpy().squeeze()
-        src = src.swapaxes(0, -1)
+        src = np.moveaxis(src, 0, -1)
 
         if parallelization_lvl == 0:
             from .quilting.generate import generateTextureMap
@@ -239,7 +239,7 @@ class LatentQuilting:
                                            shm_name, 0)
 
         terminate_generation(finish_event, shm_jobs, t)
-        texture = texture.swapaxes(0, -1)
+        texture = np.moveaxis(texture, -1, 0)
         texture = torch.from_numpy(texture).unsqueeze(0)
         return ({"samples": texture},)
 
@@ -248,14 +248,16 @@ class LatentQuilting:
         from joblib import Parallel, delayed
 
         def unwrap_and_quilt(latent, job_id):
-            latent = latent.cpu().numpy().squeeze().swapaxes(0, -1)
+            latent = latent.cpu().numpy().squeeze()
+            latent = np.moveaxis(latent, 0, -1)
             if parallelization_lvl == 0:
                 result = quilt_single_src_no_parallelization(latent, block_size, overlap, outH, outW, tolerance, rng,
                                                              jobs_shm_name, job_id)
             else:
                 result = quilt_single_with_parallelization(latent, block_size, overlap, outH, outW, tolerance, 1, rng,
                                                            jobs_shm_name, job_id)
-            return torch.from_numpy(result.swapaxes(0, -1))
+            result = np.moveaxis(result, -1, 0)
+            return torch.from_numpy(result)
 
         results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
             delayed(unwrap_and_quilt)(src[i], i) for i in range(src.shape[0]))
