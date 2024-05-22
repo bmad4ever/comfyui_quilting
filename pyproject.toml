@@ -1,0 +1,14 @@
+[project]
+name = "comfyui_quilting"
+description = "image and latent quilting nodes for comfyui"
+version = "1.0.0"
+license = "LICENSE"
+
+[project.urls]
+Repository = "https://github.com/bmad4ever/comfyui_quilting"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "comfyui_quilting"
+Icon = ""
