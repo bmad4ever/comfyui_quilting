@@ -17,9 +17,9 @@ def quilt_single_src_no_parallelization(src, block_size, overlap, outH, outW, to
 
 def quilt_single_with_parallelization(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng,
                                       jobs_shm_name, job_id):
-    from .parallel_quilting import generateTextureMap_p
-    return generateTextureMap_p(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng,
-                                jobs_shm_name, job_id)
+    from .parallel_quilting import generate_texture_parallel
+    return generate_texture_parallel(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng,
+                                     jobs_shm_name, job_id)
 
 
 QUILTING_SHARED_INPUT_TYPES = {
@@ -69,7 +69,6 @@ def waiting_loop(abort_loop_event: Event, pbar: utils.ProgressBar, total_steps, 
             procs_statuses[0] = 1
             return
         pbar.update_absolute(int(np.sum(procs_statuses[1:ntasks + 1])), total_steps)
-    return
 
 
 def terminate_generation(finished_event, jobs_shared_memory, pbt: Thread):
@@ -84,10 +83,10 @@ def terminate_generation(finished_event, jobs_shared_memory, pbt: Thread):
         throw_exception_if_processing_interrupted()
 
 
-def setup_pbar(blocksize, overlap, out_height, out_width, par_lvl, batch_len):
-    nH = int(np.ceil((out_height - blocksize) * 1.0 / (blocksize - overlap)))
-    nW = int(np.ceil((out_width - blocksize) * 1.0 / (blocksize - overlap)))
-    total_steps: int = ((nH + 1) * (nW + 1) - 1) * batch_len  # ignores first corner/center
+def setup_pbar(block_size, overlap, out_height, out_width, par_lvl, batch_len):
+    n_rows = int(np.ceil((out_height - block_size) * 1.0 / (block_size - overlap)))
+    n_columns = int(np.ceil((out_width - block_size) * 1.0 / (block_size - overlap)))
+    total_steps: int = ((n_rows + 1) * (n_columns + 1) - 1) * batch_len  # ignores first corner/center
     # might be less than the generated when using parallel solution, but not by far, so will leave it like this for now
 
     pbar: utils.ProgressBar = utils.ProgressBar(total_steps)
@@ -111,7 +110,7 @@ def setup_pbar(blocksize, overlap, out_height, out_width, par_lvl, batch_len):
 
 class ImageQuilting:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "src": ("IMAGE",),
@@ -130,8 +129,8 @@ class ImageQuilting:
     CATEGORY = "Bmad/CV/Misc"
 
     def compute(self, src, block_size, scale, overlap, tolerance, parallelization_lvl, seed):
-        H, W = src.shape[1:3]
-        outH, outW = int(scale * H), int(scale * W)
+        h, w = src.shape[1:3]
+        out_h, out_w = int(scale * h), int(scale * w)
         if overlap > 0:
             overlap = int(block_size * overlap)
         else:
@@ -142,10 +141,10 @@ class ImageQuilting:
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
         finish_event, t, shm_name, shm_jobs = \
-            setup_pbar(block_size, overlap, outH, outW, parallelization_lvl, src.shape[0])
+            setup_pbar(block_size, overlap, out_h, out_w, parallelization_lvl, src.shape[0])
 
         if src.shape[0] > 1:  # if image batch
-            texture_batch = self.batch_using_jobs(src, block_size, overlap, outH, outW, tolerance,
+            texture_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance,
                                                   parallelization_lvl, rng, shm_name)
             terminate_generation(finish_event, shm_jobs, t)
             return (texture_batch,)
@@ -153,11 +152,11 @@ class ImageQuilting:
         # if single image
         src = src.cpu().numpy().squeeze()
         if parallelization_lvl == 0:
-            texture = quilt_single_src_no_parallelization(src, block_size, overlap, outH, outW, tolerance, rng,
+            texture = quilt_single_src_no_parallelization(src, block_size, overlap, out_h, out_w, tolerance, rng,
                                                           shm_name, 0)
         else:
             texture = quilt_single_with_parallelization(
-                src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng, shm_name, 0)
+                src, block_size, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, shm_name, 0)
 
         texture = torch.from_numpy(texture).unsqueeze(0)
 
@@ -186,7 +185,7 @@ class ImageQuilting:
 
 class LatentQuilting:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "src": ("LATENT",),
@@ -204,10 +203,10 @@ class LatentQuilting:
 
     def compute(self, src, block_size, scale, overlap, tolerance, parallelization_lvl, seed):
         src = src["samples"]
-        H, W = src.shape[2:4]
-        outH, outW = int(scale * H), int(scale * W)
+        h, w = src.shape[2:4]
+        out_h, out_w = int(scale * h), int(scale * w)
         print(f"shape = {src.shape}")
-        print(f"sizes {(H, W, outH, outW)}")
+        print(f"sizes {(h, w, out_h, out_w)}")
         if overlap > 0:
             overlap = int(block_size * overlap)
         else:
@@ -218,10 +217,10 @@ class LatentQuilting:
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
         finish_event, t, shm_name, shm_jobs = \
-            setup_pbar(block_size, overlap, outH, outW, parallelization_lvl, src.shape[0])
+            setup_pbar(block_size, overlap, out_h, out_w, parallelization_lvl, src.shape[0])
 
         if src.shape[0] > 1:  # if multiple
-            latent_batch = self.batch_using_jobs(src, block_size, overlap, outH, outW, tolerance,
+            latent_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance,
                                                  parallelization_lvl, rng, shm_name)
             terminate_generation(finish_event, shm_jobs, t)
             return ({"samples": latent_batch},)
@@ -232,11 +231,11 @@ class LatentQuilting:
 
         if parallelization_lvl == 0:
             from .quilting.generate import generateTextureMap
-            texture = generateTextureMap(src, block_size, overlap, outH, outW, tolerance, rng, shm_name, 0)
+            texture = generateTextureMap(src, block_size, overlap, out_h, out_w, tolerance, rng, shm_name, 0)
         else:
-            from .parallel_quilting import generateTextureMap_p
-            texture = generateTextureMap_p(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng,
-                                           shm_name, 0)
+            from .parallel_quilting import generate_texture_parallel
+            texture = generate_texture_parallel(src, block_size, overlap, out_h, out_w, tolerance, parallelization_lvl, rng,
+                                                shm_name, 0)
 
         terminate_generation(finish_event, shm_jobs, t)
         texture = np.moveaxis(texture, -1, 0)

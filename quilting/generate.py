@@ -4,8 +4,7 @@ import numpy as np
 from math import ceil
 from itertools import product
 
-#inf = np.float('inf')
-inf = float("inf")
+inf = float('inf')
 ErrorCombinationFunc = np.add
 
 
@@ -21,7 +20,7 @@ def findPatchHorizontal(refBlock, texture, blocksize, overlap, tolerance, rng: n
 			errMat[i, j] = rmsVal
 
 	minVal = np.min(errMat)
-	y, x = np.where(errMat < (1.0 + tolerance)*(minVal))
+	y, x = np.nonzero(errMat < (1.0 + tolerance)*(minVal))
 	c = rng.integers(len(y))
 	y, x = y[c], x[c]
 	return texture[y:y+blocksize, x:x+blocksize]
@@ -40,7 +39,7 @@ def findPatchBoth(refBlockLeft, refBlockTop, texture, blocksize, overlap, tolera
 			errMat[i, j] = rmsVal
 
 	minVal = np.min(errMat)
-	y, x = np.where(errMat < (1.0 + tolerance)*(minVal))
+	y, x = np.nonzero(errMat < (1.0 + tolerance)*(minVal))
 	c = rng.integers(len(y))
 	y, x = y[c], x[c]
 	return texture[y:y+blocksize, x:x+blocksize]
@@ -58,7 +57,7 @@ def findPatchVertical(refBlock, texture, blocksize, overlap, tolerance, rng: np.
 			errMat[i, j] = rmsVal
 
 	minVal = np.min(errMat)
-	y, x = np.where(errMat < (1.0 + tolerance)*(minVal))
+	y, x = np.nonzero(errMat < (1.0 + tolerance)*(minVal))
 	c = rng.integers(len(y))
 	y, x = y[c], x[c]
 	return texture[y:y+blocksize, x:x+blocksize]

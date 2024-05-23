@@ -1,9 +1,7 @@
 ## Handles all the preprocessing
 import numpy as np
-from itertools import product
-from matplotlib import pyplot as plt
 
-inf = np.float('inf')
+inf = float('inf')
 
 def rasterScan(image, blocksize, step=None):
 	'''
@@ -40,6 +38,4 @@ def VerticalOverlap(im1, im2, blocksize, overlap):
 	mask, minVal = HorizontalOverlap(im1Rot, im2Rot, blocksize, overlap)
 	mask = np.rot90(mask, 3)
 
-	# plt.imshow(mask)
-	# plt.show()
 	return mask, minVal
