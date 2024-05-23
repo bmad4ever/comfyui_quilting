@@ -125,7 +125,7 @@ def generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance,
 
     # horizontal inverted
     hi_start_block = np.fliplr(start_block)
-    hi_image = np.fliplr(image)  # in retrospective, should have used np; but other nodes use cv, so makes no diff.
+    hi_image = np.fliplr(image)
 
     # vertical inverted
     vi_start_block = np.flipud(start_block)
@@ -182,9 +182,9 @@ def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, p_str
     :param vis: vertical inverted stripe
     """
     shm_text = None
-    vi_hi_s = np.flipud(his)  # vertical inversion of the horizontal inverted stripe
-    hi_vi_s = np.fliplr(vis)
-    vhi_image = np.flipud(hi_image)
+    vi_hi_s = np.ascontiguousarray(np.flipud(his))  # vertical inversion of the horizontal inverted stripe
+    hi_vi_s = np.ascontiguousarray(np.fliplr(vis))
+    vhi_image = np.ascontiguousarray(np.flipud(hi_image))
 
     if p_strips > 1:
         size = vis.shape[0] * his.shape[1] * hi_image.shape[2] * hi_image.dtype.itemsize
@@ -201,7 +201,7 @@ def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, p_str
     else:
         texture = fill_quad(rows, columns, vi_hi_s.shape[0], overlap, texture, vhi_image, tolerance, rng, jobs_shm_name,
                             job_id + 0)
-    texture = np.flip(texture, axis=(0, 1))
+    texture = np.ascontiguousarray(np.flip(texture, axis=(0, 1)))
 
     if p_strips > 1:
         shm_text.close()
@@ -211,7 +211,7 @@ def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, p_str
 
 def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, p_strips, rng, jobs_shm_name, job_id):
     shm_text = None
-    vi_hs = np.flipud(hs)
+    vi_hs = np.ascontiguousarray(np.flipud(hs))
 
     if p_strips > 1:
         size = vis.shape[0] * hs.shape[1] * vi_image.shape[2] * vi_image.dtype.itemsize
@@ -228,7 +228,7 @@ def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, p_stri
     else:
         texture = fill_quad(rows, columns, hs.shape[0], overlap, texture, vi_image, tolerance, rng, jobs_shm_name,
                             job_id + 1)
-    texture = np.flipud(texture)
+    texture = np.ascontiguousarray(np.flipud(texture))
 
     if p_strips > 1:
         shm_text.close()
@@ -238,7 +238,7 @@ def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, p_stri
 
 def quad4(vs, his, hi_image, rows: int, columns: int, overlap, tolerance, p_strips, rng, jobs_shm_name, job_id):
     shm_text = None
-    hi_vs = np.fliplr(vs)
+    hi_vs = np.ascontiguousarray(np.fliplr(vs))
 
     if p_strips > 1:
         size = vs.shape[0] * his.shape[1] * hi_image.shape[2] * hi_image.dtype.itemsize
@@ -255,7 +255,7 @@ def quad4(vs, his, hi_image, rows: int, columns: int, overlap, tolerance, p_stri
     else:
         texture = fill_quad(rows, columns, his.shape[0], overlap, texture, hi_image, tolerance, rng, jobs_shm_name,
                             job_id + 2)
-    texture = np.fliplr(texture)
+    texture = np.ascontiguousarray(np.fliplr(texture))
 
     if p_strips > 1:
         shm_text.close()
@@ -352,3 +352,4 @@ def fill_quad_ps(rows, columns, block_size, overlap, texture_shared_mem_name, im
 
     shm_coord.close()
     shm_coord.unlink()
+    return
