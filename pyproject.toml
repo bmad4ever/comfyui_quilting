@@ -9,6 +9,6 @@ Repository = "https://github.com/bmad4ever/comfyui_quilting"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "bmad4ever"
 DisplayName = "comfyui_quilting"
 Icon = ""
