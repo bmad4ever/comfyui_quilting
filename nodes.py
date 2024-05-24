@@ -29,8 +29,8 @@ QUILTING_SHARED_INPUT_TYPES = {
     # the percentage of pixels that overlap between each block_sized block
     "overlap": ("FLOAT", {"default": 1 / 6.0, "min": .1, "max": .9, "step": .01}),
 
-    # this is a percentage relative to min error when searching for a patch.
-    # the ones that within tolerance are potential candidates to be selected.
+    # this is a percentage relative to the min error when searching for a patch.
+    # the ones within tolerance are potential candidates to be selected.
     # tolerance equal to 1 means a tolerance of 2 times the min error.
     # my interpretation regarding its application is that
     # tolerance can help prevent too much sameness in the texture
