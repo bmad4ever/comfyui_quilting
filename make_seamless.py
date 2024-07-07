@@ -85,10 +85,6 @@ def find_4way_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bo
     return texture[y:y + block_size, x:x + block_size]
 
 
-# TODO extend should be an option
-#  currently the texture increases in size... remove a block size portion of the seam on the texture instead
-#  too keep it with the same dimensions
-
 def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.random.Generator,
                                keep_src_dims = True, fnc=np.maximum, ref_image=None):
     """
