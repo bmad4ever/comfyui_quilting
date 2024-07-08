@@ -1,8 +1,12 @@
+from functools import lru_cache
+
+import cachetools.func
 import numpy as np
 from math import ceil
 from itertools import product
 # from .quilting.generate import inf, getMinCutPatchBoth
 import cv2 as cv  # if possible, remove this dependency
+
 
 #==================================================
 
@@ -53,6 +57,35 @@ def find_horizontal_transition_patch(ref_block_left, ref_block_right, ref_block_
     c = rng.integers(len(y))
     y, x = y[c], x[c]
     return texture[y:y + block_size, x:x + block_size]
+
+
+def find_4way_patch_v2(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
+                       texture, block_size, overlap, tolerance,
+                       rng: np.random.Generator
+                       ):
+    ccs = cv.matchTemplate(image=texture[:, :-block_size+overlap],
+                           templ=ref_block_left[:, :overlap], method=cv.TM_CCOEFF_NORMED)
+    if ref_block_right is not None:
+        ccs = np.minimum(ccs, cv.matchTemplate(image=np.roll(texture, -block_size+overlap, axis=1)[:, :-block_size+overlap],
+                         templ=ref_block_right[:, -overlap:], method=cv.TM_CCOEFF_NORMED))
+    if ref_block_top is not None:
+        ccs = np.minimum(ccs, cv.matchTemplate(image=texture[:-block_size+overlap, :],
+                                               templ=ref_block_top[-overlap:, :], method=cv.TM_CCOEFF_NORMED))
+    if ref_block_bottom is not None:
+        ccs = np.minimum(ccs, cv.matchTemplate(
+            image=np.roll(texture, -block_size+overlap, axis=0)[:-block_size+overlap, :],
+            templ=ref_block_bottom[:overlap, :], method=cv.TM_CCOEFF_NORMED))
+    # the lower the value the higher the difference
+    # minimum is selecting the value from the worst overlap
+
+    err_mat = 1 - ccs
+    min_val = np.min(err_mat)
+    y, x = np.nonzero(err_mat < (1.0 + tolerance) * min_val)
+    c = rng.integers(len(y))
+    y, x = y[c], x[c]
+    #print(f"ccs shape: {ccs.shape} ;  yx = {(y, x)}   ;  tex shape  = {(texture.shape)}")
+    return texture[y:y + block_size, x:x + block_size]
+
 
 
 def find_4way_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
@@ -107,7 +140,7 @@ def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.ra
     n_h = int(ceil((out_h - block_size) / bmo))
 
     texture_map_h = block_size + n_h * bmo
-    texture_map = np.zeros((texture_map_h, out_w, image.shape[-1]))
+    texture_map = np.zeros((texture_map_h, out_w, image.shape[-1])).astype(image.dtype)
     texture_map[:src_h, :src_w] = image
     texture_map = np.roll(  # roll leftmost block to the right edge, and then some if keeping original size
         texture_map, -block_size + (overlap - block_size // 2 if keep_src_dims else 0), axis=1)
@@ -123,8 +156,8 @@ def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.ra
     # devnote -> could make it at the middle to parallel by 2x; doesn't seem needed though, might reconsider later...
     ref_block_left = texture_map[:block_size, x1 - bmo:x2 - bmo]
     ref_block_right = texture_map[:block_size, -block_size:]
-    patch_block = find_horizontal_transition_patch(
-        ref_block_left, ref_block_right, None, ref_image, block_size, overlap, tolerance, rng, fnc)
+    patch_block = find_4way_patch_v2(
+        ref_block_left, ref_block_right, None, None, ref_image, block_size, overlap, tolerance, rng)#, fnc)
     min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, None, None,
                                            patch_block, block_size, overlap)
     texture_map[:block_size, x1:x2] = min_cut_patch
@@ -143,8 +176,8 @@ def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.ra
         else:
             ref_block_top = texture_map[(blk_1y - block_size + overlap):(blk_1y + overlap), x1:x2]
 
-        patch_block = find_horizontal_transition_patch(
-            ref_block_left, ref_block_right, ref_block_top, ref_image, block_size, overlap, tolerance, rng, fnc)
+        patch_block = find_4way_patch_v2(
+            ref_block_left, ref_block_right, ref_block_top, None, ref_image, block_size, overlap, tolerance, rng)#, fnc)
         min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, None,
                                                patch_block, block_size, overlap)
 
@@ -305,7 +338,7 @@ def make_seamless_both_v2(image, block_size, overlap, tolerance, rng: np.random.
     fs = np.roll(hs_vs, block_size - overlap + (hs_vs.shape[1] + block_size) // 2, axis=1)
     fs = np.roll(fs, fs.shape[0] // 2 + block_size - overlap + block_size // 2, axis=0)
 
-    return fs
+    #return fs
 
     # upper left corner (floored)
     ys = (fs.shape[0] - block_size) // 2
@@ -322,12 +355,12 @@ def make_seamless_both_v2(image, block_size, overlap, tolerance, rng: np.random.
     adj_top_blk = np.roll(fs, ye - overlap, axis=0)[-block_size:, xs-overlap:xe-overlap]
     adj_btm_blk = np.roll(fs, -ye + overlap, axis=0)[:block_size, xs-overlap:xe-overlap]
     adj_lft_blk = np.roll(fs, -xs, axis=1)[ys:ye, -block_size:]
-    patch = find_4way_patch(adj_lft_blk, None, adj_top_blk, adj_btm_blk,
-                            image, block_size, overlap, tolerance, rng, fnc)
+    patch = find_4way_patch_v2(adj_lft_blk, None, adj_top_blk, adj_btm_blk,
+                            image, block_size, overlap, tolerance, rng)#, fnc)
     patch = get_4way_min_cut_patch(adj_lft_blk, None, adj_top_blk, adj_btm_blk,
                                    patch, block_size, overlap)
     fs[ys:ye, xs-overlap:xe-overlap] = patch
-    #fs[ys:ye, xs-overlap:xe-overlap] *= .5
+    #fs[ys:ye, xs-overlap:xe-overlap] = fs[ys:ye, xs-overlap:xe-overlap]/2   # debug patch location
 
     # PATCH VERTICAL SEAM -> RIGHT PATCH
     #fs[ys:ye, xs:xe+overlap, :] *= 0.5
@@ -336,20 +369,20 @@ def make_seamless_both_v2(image, block_size, overlap, tolerance, rng: np.random.
     adj_btm_blk = np.roll(fs, -ye + overlap, axis=0)[:block_size, xs + overlap:xe + overlap]
     adj_lft_blk = np.roll(fs, -xs-overlap*2, axis=1)[ys:ye, -block_size:]  # review this one
     adj_rgt_blk = np.roll(fs, -xs-block_size, axis=1)[ys:ye, :block_size]
-    patch = find_4way_patch(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
-                            image, block_size, overlap, tolerance, rng, fnc)
+    patch = find_4way_patch_v2(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
+                            image, block_size, overlap, tolerance, rng)#, fnc)
     patch = get_4way_min_cut_patch(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
                                    patch, block_size, overlap)
     #fs[ys:ye, xs + overlap - block_size + overlap:xe + overlap - block_size + overlap] = adj_lft_blk
     #fs[ys:ye, xs + overlap - block_size + overlap:xe + overlap - block_size + overlap] *= .5
     fs[ys:ye, xs + overlap:xe + overlap] = patch
-    #fs[ys:ye, xs + overlap:xe + overlap] *= .5
+    #fs[ys:ye, xs + overlap:xe + overlap] = fs[ys:ye, xs + overlap:xe + overlap] / 2  # debug patch location
     return fs
 
 
 
 if __name__ == "__main__":
-    img = cv.imread("./t8.png", cv.IMREAD_COLOR)
+    img = cv.imread("./t166.png", cv.IMREAD_COLOR)
     rng = np.random.default_rng(1300)
 
     #img_sh = make_seamless_horizontally(img, 64, 30, .001, rng)
@@ -364,20 +397,16 @@ if __name__ == "__main__":
     #img_sv_tiled[img_sv.shape[0]:, :] = img_sv
     #cv.imwrite("./v_seamless.png", img_sv_tiled)
 
-    #    Dev Note 06/07
-    # consider searching block size & overlap that reduces median error to fill a centered square
-    #  if implemented, maybe refine this evaluation w/ something more...
-
     #    Dev Note 03/07 -> w/ respect to potential usage:
     # Unsure if this would be useful in latent space.
     # Likely less noticeable due to lower resolution...
     # but if diffusion is used the edges should change,
     # so unless there is some safeguard in place it should be ratter useless.
 
-    bs = round(min(img.shape[:2]) / 5)
+    bs = 85#round(min(img.shape[:2]) / 5)
     overlap = round(bs / 2.3)
     print(f"block size = {bs}  ;  overlap = {overlap}")
-    img_sb = make_seamless_both_v2(img, bs, overlap, .125, rng)  # .1 seems to low ; perhaps .2 is good
+    img_sb = make_seamless_both_v2(img, bs, overlap, .000125, rng)  # .1 seems to low ; perhaps .2 is good
     cv.imwrite("./b_seamless_v2.png", img_sb)
 
     img_4tiles = np.empty((img_sb.shape[0] * 2, img_sb.shape[1] * 2, img_sb.shape[2]))
