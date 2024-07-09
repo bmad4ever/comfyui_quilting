@@ -1,11 +1,8 @@
-from multiprocessing.shared_memory import SharedMemory
-
 import numpy as np
-from math import ceil
 from itertools import product
 
+
 inf = float('inf')
-ErrorCombinationFunc = np.add
 
 
 def findPatchHorizontal(refBlock, texture, blocksize, overlap, tolerance, rng: np.random.Generator):
@@ -24,7 +21,6 @@ def findPatchHorizontal(refBlock, texture, blocksize, overlap, tolerance, rng: n
 	c = rng.integers(len(y))
 	y, x = y[c], x[c]
 	return texture[y:y+blocksize, x:x+blocksize]
-
 
 def findPatchBoth(refBlockLeft, refBlockTop, texture, blocksize, overlap, tolerance, rng: np.random.Generator):
 	'''
@@ -68,7 +64,7 @@ def getMinCutPatchHorizontal(block1, block2, blocksize, overlap):
 	Get the min cut patch done horizontally
 	'''
 	err = ((block1[:, -overlap:] - block2[:, :overlap])**2).mean(2)
-	# maintain minIndex for 2nd row onwards and 
+	# maintain minIndex for 2nd row onwards and
 	minIndex = []
 	E = [list(err[0])]
 	for i in range(1, err.shape[0]):
@@ -118,7 +114,7 @@ def getMinCutPatchBoth(refBlockLeft, refBlockTop, patchBlock, blocksize, overlap
 	Find minCut for both and calculate
 	'''
 	err = ((refBlockLeft[:, -overlap:] - patchBlock[:, :overlap])**2).mean(2)
-	# maintain minIndex for 2nd row onwards and 
+	# maintain minIndex for 2nd row onwards and
 	minIndex = []
 	E = [list(err[0])]
 	for i in range(1, err.shape[0]):
@@ -151,7 +147,7 @@ def getMinCutPatchBoth(refBlockLeft, refBlockTop, patchBlock, blocksize, overlap
 	###################################################################
 	## Now for vertical one
 	err = ((np.rot90(refBlockTop)[:, -overlap:] - np.rot90(patchBlock)[:, :overlap])**2).mean(2)
-	# maintain minIndex for 2nd row onwards and 
+	# maintain minIndex for 2nd row onwards and
 	minIndex = []
 	E = [list(err[0])]
 	for i in range(1, err.shape[0]):
@@ -193,75 +189,4 @@ def getMinCutPatchBoth(refBlockLeft, refBlockTop, patchBlock, blocksize, overlap
 	return resBlock
 
 
-def generateTextureMap(image, blocksize, overlap, outH, outW, tolerance, rng: np.random.Generator, jobs_shm_name, job_id):
-	shm_jobs = SharedMemory(name=jobs_shm_name)
-	coord_jobs_array = np.ndarray((2+job_id,), dtype=np.dtype('uint32'), buffer=shm_jobs.buf)
-
-	nH = int(ceil((outH - blocksize)*1.0/(blocksize - overlap)))
-	nW = int(ceil((outW - blocksize)*1.0/(blocksize - overlap)))
-
-	textureMap = np.zeros(((blocksize + nH*(blocksize - overlap)), (blocksize + nW*(blocksize - overlap)), image.shape[2]))
-	
-	# Starting index and block
-	H, W = image.shape[:2]
-	randH = rng.integers(H - blocksize)
-	randW = rng.integers(W - blocksize)
-
-	startBlock = image[randH:randH+blocksize, randW:randW+blocksize]
-	textureMap[:blocksize, :blocksize, :] = startBlock
-
-	# Fill the first row 
-	for i, blkIdx in enumerate(range((blocksize-overlap), textureMap.shape[1]-overlap, (blocksize-overlap))):
-		# Find horizontal error for this block
-		# Calculate min, find index having tolerance
-		# Choose one randomly among them
-		# blkIdx = block index to put in
-		refBlock = textureMap[:blocksize, (blkIdx-blocksize+overlap):(blkIdx+overlap)]
-		patchBlock = findPatchHorizontal(refBlock, image, blocksize, overlap, tolerance, rng)
-		minCutPatch = getMinCutPatchHorizontal(refBlock, patchBlock, blocksize, overlap)
-		textureMap[:blocksize, (blkIdx):(blkIdx+blocksize)] = minCutPatch
-	coord_jobs_array[1+job_id] += nW
-	if coord_jobs_array[0] > 0:
-		return textureMap
-	#print("{} out of {} rows complete...".format(1, nH+1))
-
-
-	### Fill the first column
-	for i, blkIdx in enumerate(range((blocksize-overlap), textureMap.shape[0]-overlap, (blocksize-overlap))):
-		# Find vertical error for this block
-		# Calculate min, find index having tolerance
-		# Choose one randomly among them
-		# blkIdx = block index to put in
-		refBlock = textureMap[(blkIdx-blocksize+overlap):(blkIdx+overlap), :blocksize]
-		patchBlock = findPatchVertical(refBlock, image, blocksize, overlap, tolerance, rng)
-		minCutPatch = getMinCutPatchVertical(refBlock, patchBlock, blocksize, overlap)
-		textureMap[(blkIdx):(blkIdx+blocksize), :blocksize] = minCutPatch
-	coord_jobs_array[1+job_id] += nH
-	if coord_jobs_array[0] > 0:
-		return textureMap
-
-	### Fill in the other rows and columns
-	for i in range(1, nH+1):
-		for j in range(1, nW+1):
-			# Choose the starting index for the texture placement
-			blkIndexI = i*(blocksize-overlap)
-			blkIndexJ = j*(blocksize-overlap)
-			# Find the left and top block, and the min errors independently
-			refBlockLeft = textureMap[(blkIndexI):(blkIndexI+blocksize), (blkIndexJ-blocksize+overlap):(blkIndexJ+overlap)]
-			refBlockTop  = textureMap[(blkIndexI-blocksize+overlap):(blkIndexI+overlap), (blkIndexJ):(blkIndexJ+blocksize)]
-
-			patchBlock = findPatchBoth(refBlockLeft, refBlockTop, image, blocksize, overlap, tolerance, rng)
-			minCutPatch = getMinCutPatchBoth(refBlockLeft, refBlockTop, patchBlock, blocksize, overlap)
-
-			textureMap[(blkIndexI):(blkIndexI+blocksize), (blkIndexJ):(blkIndexJ+blocksize)] = minCutPatch
-
-			# refBlockLeft = 0.5
-			# textureMap[(blkIndexI):(blkIndexI+blocksize), (blkIndexJ-blocksize+overlap):(blkIndexJ+overlap)] = refBlockLeft
-			# textureMap[(blkIndexI-blocksize+overlap):(blkIndexI+overlap), (blkIndexJ):(blkIndexJ+blocksize)] = [0.5, 0.6, 0.7]
-			# break
-		coord_jobs_array[1+job_id] += nW
-		if coord_jobs_array[0] > 0:
-			return textureMap
-		#print("{} out of {} rows complete...".format(i+1, nH+1))
-
-	return textureMap[:outH, :outW]
+# generateTextureMap -> was moved to quilting.py; renamed to generate_texture; added data/behavior for comfyui node

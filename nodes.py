@@ -1,3 +1,4 @@
+from .quilting import generate_texture, generate_texture_parallel
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing import Event
 from threading import Thread
@@ -5,21 +6,10 @@ from comfy import utils
 import numpy as np
 import numpy.random
 import torch
+import cv2
 
 
 # TODO add nodes where user defines output's height and width instead of scale
-
-def quilt_single_src_no_parallelization(src, block_size, overlap, outH, outW, tolerance, version, rng: np.random.Generator,
-                                        jobs_shm_name, job_id):
-    from .quilting.generate import generateTextureMap
-    return generateTextureMap(src, block_size, overlap, outH, outW, tolerance, version, rng, jobs_shm_name, job_id)
-
-
-def quilt_single_with_parallelization(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng,
-                                      jobs_shm_name, job_id):
-    from .parallel_quilting import generate_texture_parallel
-    return generate_texture_parallel(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng,
-                                     jobs_shm_name, job_id)
 
 
 QUILTING_SHARED_INPUT_TYPES = {
@@ -71,7 +61,6 @@ def waiting_loop(abort_loop_event: Event, pbar: utils.ProgressBar, total_steps, 
             procs_statuses[0] = 1
             return
         pbar.update_absolute(int(np.sum(procs_statuses[1:ntasks + 1])), total_steps)
-
 
 
 def terminate_generation(finished_event, jobs_shared_memory, pbt: Thread):
@@ -152,15 +141,20 @@ class ImageQuilting:
             terminate_generation(finish_event, shm_jobs, t)
             return (texture_batch,)
 
-        # if single image
+        # ____ if single image
         src = src.cpu().numpy().squeeze()
+        if version == 2:
+            src = cv2.cvtColor(src, cv2.COLOR_RGB2Lab)
+
         if parallelization_lvl == 0:
-            texture = quilt_single_src_no_parallelization(
+            texture = generate_texture(
                 src, block_size, overlap, out_h, out_w, tolerance, version, rng, shm_name, 0)
         else:
-            texture = quilt_single_with_parallelization(
+            texture = generate_texture_parallel(
                 src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng, shm_name, 0)
 
+        if version == 2:
+            texture = cv2.cvtColor(texture, cv2.COLOR_LAB2RGB)
         texture = torch.from_numpy(texture).unsqueeze(0)
 
         terminate_generation(finish_event, shm_jobs, t)
@@ -172,12 +166,18 @@ class ImageQuilting:
 
         def unwrap_and_quilt(img_as_tensor, job_id):
             image = img_as_tensor.cpu().numpy()
+            if version == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
+
             if parallelization_lvl == 0:
-                result = quilt_single_src_no_parallelization(image, block_size, overlap, outH, outW, tolerance, version, rng,
-                                                             jobs_shm_name, job_id)
+                result = generate_texture(image, block_size, overlap, outH, outW, tolerance, version, rng,
+                                          jobs_shm_name, job_id)
             else:
-                result = quilt_single_with_parallelization(image, block_size, overlap, outH, outW, tolerance, version, 1, rng,
-                                                           jobs_shm_name, job_id)
+                result = generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance, version, 1, rng,
+                                                   jobs_shm_name, job_id)
+
+            if version == 2:
+                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
             return torch.from_numpy(result)
 
         results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
@@ -228,15 +228,14 @@ class LatentQuilting:
             terminate_generation(finish_event, shm_jobs, t)
             return ({"samples": latent_batch},)
 
-        # if single
+        # ____ if single
         src = src[0].cpu().numpy().squeeze()
         src = np.moveaxis(src, 0, -1)
 
         if parallelization_lvl == 0:
-            from .quilting.generate import generateTextureMap
-            texture = generateTextureMap(src, block_size, overlap, out_h, out_w, tolerance, version, rng, shm_name, 0)
+            texture = generate_texture(
+                src, block_size, overlap, out_h, out_w, tolerance, version, rng, shm_name, 0)
         else:
-            from .parallel_quilting import generate_texture_parallel
             texture = generate_texture_parallel(
                 src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng, shm_name, 0)
 
@@ -253,11 +252,11 @@ class LatentQuilting:
             latent = latent.cpu().numpy().squeeze()
             latent = np.moveaxis(latent, 0, -1)
             if parallelization_lvl == 0:
-                result = quilt_single_src_no_parallelization(
+                result = generate_texture(
                     latent, block_size, overlap, outH, outW, tolerance, version, rng,
                     jobs_shm_name, job_id)
             else:
-                result = quilt_single_with_parallelization(
+                result = generate_texture_parallel(
                     latent, block_size, overlap, outH, outW, tolerance, version, 1, rng,
                     jobs_shm_name, job_id)
             result = np.moveaxis(result, -1, 0)
