@@ -9,16 +9,16 @@ import torch
 
 # TODO add nodes where user defines output's height and width instead of scale
 
-def quilt_single_src_no_parallelization(src, block_size, overlap, outH, outW, tolerance, rng: np.random.Generator,
+def quilt_single_src_no_parallelization(src, block_size, overlap, outH, outW, tolerance, version, rng: np.random.Generator,
                                         jobs_shm_name, job_id):
     from .quilting.generate import generateTextureMap
-    return generateTextureMap(src, block_size, overlap, outH, outW, tolerance, rng, jobs_shm_name, job_id)
+    return generateTextureMap(src, block_size, overlap, outH, outW, tolerance, version, rng, jobs_shm_name, job_id)
 
 
-def quilt_single_with_parallelization(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng,
+def quilt_single_with_parallelization(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng,
                                       jobs_shm_name, job_id):
     from .parallel_quilting import generate_texture_parallel
-    return generate_texture_parallel(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng,
+    return generate_texture_parallel(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng,
                                      jobs_shm_name, job_id)
 
 
@@ -29,13 +29,13 @@ QUILTING_SHARED_INPUT_TYPES = {
     # the percentage of pixels that overlap between each block_sized block
     "overlap": ("FLOAT", {"default": 1 / 6.0, "min": .1, "max": .9, "step": .01}),
 
-    # this is a percentage relative to the min error when searching for a patch.
-    # the ones within tolerance are potential candidates to be selected.
+    # this is a percentage relative to min error when searching for a patch.
+    # the ones that within tolerance are potential candidates to be selected.
     # tolerance equal to 1 means a tolerance of 2 times the min error.
     # my interpretation regarding its application is that
     # tolerance can help prevent too much sameness in the texture
     # due to some subset of patches being better at minimizing the error.
-    "tolerance": ("FLOAT", {"default": .1, "min": 0.01, "max": 2, "step": .01}),
+    "tolerance": ("FLOAT", {"default": .1, "min": 0, "max": 2, "step": .01}),
 
     # 0 -> no parallelization; uses the reference implementation
     # 1 -> 4 jobs used ( divides generation into 4 sections )
@@ -44,6 +44,8 @@ QUILTING_SHARED_INPUT_TYPES = {
     "parallelization_lvl": ("INT", {"default": 1, "min": 0, "max": 6, "step": 1}),
 
     "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+
+    "version": ("INT", {"default": 1, "min": 0, "max": 3}),
 }
 
 
@@ -69,6 +71,7 @@ def waiting_loop(abort_loop_event: Event, pbar: utils.ProgressBar, total_steps, 
             procs_statuses[0] = 1
             return
         pbar.update_absolute(int(np.sum(procs_statuses[1:ntasks + 1])), total_steps)
+
 
 
 def terminate_generation(finished_event, jobs_shared_memory, pbt: Thread):
@@ -128,7 +131,7 @@ class ImageQuilting:
     FUNCTION = "compute"
     CATEGORY = "Bmad/CV/Misc"
 
-    def compute(self, src, block_size, scale, overlap, tolerance, parallelization_lvl, seed):
+    def compute(self, src, block_size, scale, overlap, tolerance, parallelization_lvl, seed, version):
         h, w = src.shape[1:3]
         out_h, out_w = int(scale * h), int(scale * w)
         if overlap > 0:
@@ -144,7 +147,7 @@ class ImageQuilting:
             setup_pbar(block_size, overlap, out_h, out_w, parallelization_lvl, src.shape[0])
 
         if src.shape[0] > 1:  # if image batch
-            texture_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance,
+            texture_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance, version,
                                                   parallelization_lvl, rng, shm_name)
             terminate_generation(finish_event, shm_jobs, t)
             return (texture_batch,)
@@ -152,11 +155,11 @@ class ImageQuilting:
         # if single image
         src = src.cpu().numpy().squeeze()
         if parallelization_lvl == 0:
-            texture = quilt_single_src_no_parallelization(src, block_size, overlap, out_h, out_w, tolerance, rng,
-                                                          shm_name, 0)
+            texture = quilt_single_src_no_parallelization(
+                src, block_size, overlap, out_h, out_w, tolerance, version, rng, shm_name, 0)
         else:
             texture = quilt_single_with_parallelization(
-                src, block_size, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, shm_name, 0)
+                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng, shm_name, 0)
 
         texture = torch.from_numpy(texture).unsqueeze(0)
 
@@ -164,16 +167,16 @@ class ImageQuilting:
         return (texture,)
 
     @staticmethod
-    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng, jobs_shm_name):
+    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng, jobs_shm_name):
         from joblib import Parallel, delayed
 
         def unwrap_and_quilt(img_as_tensor, job_id):
             image = img_as_tensor.cpu().numpy()
             if parallelization_lvl == 0:
-                result = quilt_single_src_no_parallelization(image, block_size, overlap, outH, outW, tolerance, rng,
+                result = quilt_single_src_no_parallelization(image, block_size, overlap, outH, outW, tolerance, version, rng,
                                                              jobs_shm_name, job_id)
             else:
-                result = quilt_single_with_parallelization(image, block_size, overlap, outH, outW, tolerance, 1, rng,
+                result = quilt_single_with_parallelization(image, block_size, overlap, outH, outW, tolerance, version, 1, rng,
                                                            jobs_shm_name, job_id)
             return torch.from_numpy(result)
 
@@ -201,7 +204,7 @@ class LatentQuilting:
     FUNCTION = "compute"
     CATEGORY = "Bmad/CV/Misc"
 
-    def compute(self, src, block_size, scale, overlap, tolerance, parallelization_lvl, seed):
+    def compute(self, src, block_size, scale, overlap, tolerance, parallelization_lvl, seed, version):
         src = src["samples"]
         h, w = src.shape[2:4]
         out_h, out_w = int(scale * h), int(scale * w)
@@ -220,7 +223,7 @@ class LatentQuilting:
             setup_pbar(block_size, overlap, out_h, out_w, parallelization_lvl, src.shape[0])
 
         if src.shape[0] > 1:  # if multiple
-            latent_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance,
+            latent_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance, version,
                                                  parallelization_lvl, rng, shm_name)
             terminate_generation(finish_event, shm_jobs, t)
             return ({"samples": latent_batch},)
@@ -231,11 +234,11 @@ class LatentQuilting:
 
         if parallelization_lvl == 0:
             from .quilting.generate import generateTextureMap
-            texture = generateTextureMap(src, block_size, overlap, out_h, out_w, tolerance, rng, shm_name, 0)
+            texture = generateTextureMap(src, block_size, overlap, out_h, out_w, tolerance, version, rng, shm_name, 0)
         else:
             from .parallel_quilting import generate_texture_parallel
-            texture = generate_texture_parallel(src, block_size, overlap, out_h, out_w, tolerance, parallelization_lvl, rng,
-                                                shm_name, 0)
+            texture = generate_texture_parallel(
+                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng, shm_name, 0)
 
         terminate_generation(finish_event, shm_jobs, t)
         texture = np.moveaxis(texture, -1, 0)
@@ -243,18 +246,20 @@ class LatentQuilting:
         return ({"samples": texture},)
 
     @staticmethod
-    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, parallelization_lvl, rng, jobs_shm_name):
+    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng, jobs_shm_name):
         from joblib import Parallel, delayed
 
         def unwrap_and_quilt(latent, job_id):
             latent = latent.cpu().numpy().squeeze()
             latent = np.moveaxis(latent, 0, -1)
             if parallelization_lvl == 0:
-                result = quilt_single_src_no_parallelization(latent, block_size, overlap, outH, outW, tolerance, rng,
-                                                             jobs_shm_name, job_id)
+                result = quilt_single_src_no_parallelization(
+                    latent, block_size, overlap, outH, outW, tolerance, version, rng,
+                    jobs_shm_name, job_id)
             else:
-                result = quilt_single_with_parallelization(latent, block_size, overlap, outH, outW, tolerance, 1, rng,
-                                                           jobs_shm_name, job_id)
+                result = quilt_single_with_parallelization(
+                    latent, block_size, overlap, outH, outW, tolerance, version, 1, rng,
+                    jobs_shm_name, job_id)
             result = np.moveaxis(result, -1, 0)
             return torch.from_numpy(result)
 

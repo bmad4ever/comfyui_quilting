@@ -1,8 +1,78 @@
 from multiprocessing.shared_memory import SharedMemory
+
+import cv2
 import numpy as np
 from math import ceil
 from .quilting.generate import findPatchVertical, findPatchHorizontal, findPatchBoth, \
     getMinCutPatchHorizontal, getMinCutPatchVertical, getMinCutPatchBoth
+from .patch_search import find_patch_v1, find_patch_v2, find_patch_v3
+
+
+# region   get methods by version
+
+def get_find_patch_to_the_right_method(version: int):
+    match version:
+        case 0:
+            return findPatchHorizontal
+        case 1:
+            def v1_right(left_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v1(left_block, None, None, None, image, block_size, overlap, tolerance, rng)
+
+            return v1_right
+        case 2:
+            def v2_right(left_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v2(left_block, None, None, None, image, block_size, overlap, tolerance, rng)
+
+            return v2_right
+        case 3:
+            def v3_right(left_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v3(left_block, None, None, None, image, block_size, overlap, tolerance, rng)
+
+            return v3_right
+
+
+def get_find_patch_below_method(version: int):
+    match version:
+        case 0:
+            return findPatchVertical
+        case 1:
+            def v1_below(top_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v1(None, None, top_block, None, image, block_size, overlap, tolerance, rng)
+
+            return v1_below
+        case 2:
+            def v2_below(top_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v2(None, None, top_block, None, image, block_size, overlap, tolerance, rng)
+
+            return v2_below
+        case 3:
+            def v3_below(top_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v3(None, None, top_block, None, image, block_size, overlap, tolerance, rng)
+
+            return v3_below
+
+
+def get_find_patch_both_method(version: int):
+    match version:
+        case 0:
+            return findPatchBoth
+        case 1:
+            def v1_both(left_block, top_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v1(left_block, None, top_block, None, image, block_size, overlap, tolerance, rng)
+
+            return v1_both
+        case 2:
+            def v2_both(left_block, top_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v2(left_block, None, top_block, None, image, block_size, overlap, tolerance, rng)
+
+            return v2_both
+        case 3:
+            def v3_both(left_block, top_block, image, block_size, overlap, tolerance, rng):
+                return find_patch_v3(left_block, None, top_block, None, image, block_size, overlap, tolerance, rng)
+
+            return v3_both
+
+# endregion
 
 
 # -- NOTE -- ___________________________________________________________________________________________________________
@@ -46,34 +116,38 @@ from .quilting.generate import findPatchVertical, findPatchHorizontal, findPatch
 
 # region methods extracted from the source of the referenced implementation for re-usability
 
-def fill_column(image, initial_block, overlap, rows: int, tolerance, rng: np.random.Generator):
+def fill_column(image, initial_block, overlap, rows: int, tolerance, version, rng: np.random.Generator):
+    find_patch_below = get_find_patch_below_method(version)
     block_size = initial_block.shape[0]
     texture_map = np.zeros(
-        ((block_size + rows * (block_size - overlap)), block_size, image.shape[2]))
+        ((block_size + rows * (block_size - overlap)), block_size, image.shape[2])).astype(image.dtype)
     texture_map[:block_size, :block_size, :] = initial_block
     for i, blkIdx in enumerate(range((block_size - overlap), texture_map.shape[0] - overlap, (block_size - overlap))):
         ref_block = texture_map[(blkIdx - block_size + overlap):(blkIdx + overlap), :block_size]
-        patch_block = findPatchVertical(ref_block, image, block_size, overlap, tolerance, rng)
+        patch_block = find_patch_below(ref_block, image, block_size, overlap, tolerance, rng)
         min_cut_patch = getMinCutPatchVertical(ref_block, patch_block, block_size, overlap)
         texture_map[blkIdx:(blkIdx + block_size), :block_size] = min_cut_patch
     return texture_map
 
 
-def fill_row(image, initial_block, overlap, columns: int, tolerance, rng: np.random.Generator):
+def fill_row(image, initial_block, overlap, columns: int, tolerance, version: int, rng: np.random.Generator):
+    find_patch_to_the_right = get_find_patch_to_the_right_method(version)
+    #left_block, image, block_size, overlap, tolerance, rng
     block_size = initial_block.shape[0]
     texture_map = np.zeros(
-        (block_size, (block_size + columns * (block_size - overlap)), image.shape[2]))
+        (block_size, (block_size + columns * (block_size - overlap)), image.shape[2])).astype(image.dtype)
     texture_map[:block_size, :block_size, :] = initial_block
     for i, blkIdx in enumerate(range((block_size - overlap), texture_map.shape[1] - overlap, (block_size - overlap))):
         ref_block = texture_map[:block_size, (blkIdx - block_size + overlap):(blkIdx + overlap)]
-        patch_block = findPatchHorizontal(ref_block, image, block_size, overlap, tolerance, rng)
+        patch_block = find_patch_to_the_right(ref_block, image, block_size, overlap, tolerance, rng)
         min_cut_patch = getMinCutPatchHorizontal(ref_block, patch_block, block_size, overlap)
         texture_map[:block_size, blkIdx:(blkIdx + block_size)] = min_cut_patch
     return texture_map
 
 
-def fill_quad(rows: int, columns: int, block_size, overlap, texture_map, image, tolerance,
+def fill_quad(rows: int, columns: int, block_size, overlap, texture_map, image, tolerance, version,
               rng: np.random.Generator, jobs_shm_name, job_id):
+    find_patch_both = get_find_patch_both_method(version)
     # here job id is more granular, not the same as generate_texture_parallel, but rather within the sub job
     shm_jobs = SharedMemory(name=jobs_shm_name)
     coord_jobs_array = np.ndarray((2 + job_id,), dtype=np.dtype('uint32'), buffer=shm_jobs.buf)
@@ -89,7 +163,7 @@ def fill_quad(rows: int, columns: int, block_size, overlap, texture_map, image, 
                             (blk_index_i - block_size + overlap):(blk_index_i + overlap),
                             blk_index_j:(blk_index_j + block_size)]
 
-            patch_block = findPatchBoth(ref_block_left, ref_block_top, image, block_size, overlap, tolerance, rng)
+            patch_block = find_patch_both(ref_block_left, ref_block_top, image, block_size, overlap, tolerance, rng)
             min_cut_patch = getMinCutPatchBoth(ref_block_left, ref_block_top, patch_block, block_size, overlap)
 
             texture_map[blk_index_i:(blk_index_i + block_size), blk_index_j:(blk_index_j + block_size)] = min_cut_patch
@@ -103,8 +177,7 @@ def fill_quad(rows: int, columns: int, block_size, overlap, texture_map, image, 
 
 # endregion
 
-
-def generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance, nps,
+def generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance, version: int, nps,
                               rng: np.random.Generator, jobs_shm_name, job_id):
     """
     @param jobs_shm_name: shared memory name to a one dimensional array that stores the number of "blocks"
@@ -143,10 +216,10 @@ def generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance,
     # generate 2 vertical strips and 2 horizontal strips that will split the generated canvas in half
     # the center, where the stripes connect, shares the same tile
     args = [
-        (image, start_block, overlap, cols_per_quad, tolerance, rng),
-        (hi_image, hi_start_block, overlap, cols_per_quad, tolerance, rng),
-        (image, start_block, overlap, rows_per_quad, tolerance, rng),
-        (vi_image, vi_start_block, overlap, rows_per_quad, tolerance, rng)
+        (image, start_block, overlap, cols_per_quad, tolerance, version, rng),
+        (hi_image, hi_start_block, overlap, cols_per_quad, tolerance, version, rng),
+        (image, start_block, overlap, rows_per_quad, tolerance, version, rng),
+        (vi_image, vi_start_block, overlap, rows_per_quad, tolerance, version, rng)
     ]
     funcs = [fill_row, fill_row, fill_column, fill_column]
     stripes = Parallel(n_jobs=4, backend="loky", timeout=None)(
@@ -156,17 +229,17 @@ def generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance,
 
     # generate the 4 sections (quadrants)
     args = [
-        (vis, his, hi_image, rows_per_quad, cols_per_quad, overlap, tolerance, nps, rng, jobs_shm_name, job_id),
-        (vis, hs, vi_image, rows_per_quad, cols_per_quad, overlap, tolerance, nps, rng, jobs_shm_name, job_id),
-        (vs, hs, image, rows_per_quad, cols_per_quad, overlap, tolerance, nps, rng, jobs_shm_name, job_id),
-        (vs, his, hi_image, rows_per_quad, cols_per_quad, overlap, tolerance, nps, rng, jobs_shm_name, job_id)
+        (vis, his, hi_image, rows_per_quad, cols_per_quad, overlap, tolerance, version, nps, rng, jobs_shm_name, job_id),
+        (vis, hs, vi_image, rows_per_quad, cols_per_quad, overlap, tolerance, version, nps, rng, jobs_shm_name, job_id),
+        (vs, hs, image, rows_per_quad, cols_per_quad, overlap, tolerance, version, nps, rng, jobs_shm_name, job_id),
+        (vs, his, hi_image, rows_per_quad, cols_per_quad, overlap, tolerance, version, nps, rng, jobs_shm_name, job_id)
     ]
     funcs = [quad1, quad2, quad3, quad4]
     quads = Parallel(n_jobs=4, backend="loky", timeout=None)(
         delayed(funcs[i])(*args[i]) for i in range(4))
     q1, q2, q3, q4 = quads
 
-    texture = np.zeros((q1.shape[0] * 2 - block_size, q1.shape[1] * 2 - block_size, image.shape[2]))
+    texture = np.zeros((q1.shape[0] * 2 - block_size, q1.shape[1] * 2 - block_size, image.shape[2])).astype(image.dtype)
     bmo = block_size - overlap
     texture[:q1.shape[0] - bmo, :q1.shape[1] - bmo] = q1[:q1.shape[0] - bmo, :q1.shape[1] - bmo]
     texture[:q1.shape[0] - bmo, q1.shape[1] - bmo:] = q2[:q1.shape[0] - bmo, overlap:]
@@ -176,7 +249,7 @@ def generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance,
     return texture[:outH, :outW]
 
 
-def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, p_strips, rng, jobs_shm_name, job_id):
+def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, version, p_strips, rng, jobs_shm_name, job_id):
     """
     :param his: horizontal inverted stripe
     :param vis: vertical inverted stripe
@@ -191,15 +264,15 @@ def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, p_str
         shm_text = SharedMemory(create=True, size=size)
         texture = np.ndarray((vis.shape[0], his.shape[1], hi_image.shape[2]), dtype=hi_image.dtype, buffer=shm_text.buf)
     else:
-        texture = np.zeros((vis.shape[0], his.shape[1], hi_image.shape[2]))
+        texture = np.zeros((vis.shape[0], his.shape[1], hi_image.shape[2])).astype(hi_image.dtype)
 
     texture[:vi_hi_s.shape[0], :vi_hi_s.shape[1]] = vi_hi_s[:, :]
     texture[vi_hi_s.shape[0]:hi_vi_s.shape[0], :hi_vi_s.shape[1]] = hi_vi_s[vi_hi_s.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, vi_hi_s.shape[0], overlap, shm_text.name, vhi_image, tolerance, p_strips, rng,
+        fill_quad_ps(rows, columns, vi_hi_s.shape[0], overlap, shm_text.name, vhi_image, tolerance, version, p_strips, rng,
                      jobs_shm_name, job_id + p_strips * 0)
     else:
-        texture = fill_quad(rows, columns, vi_hi_s.shape[0], overlap, texture, vhi_image, tolerance, rng, jobs_shm_name,
+        texture = fill_quad(rows, columns, vi_hi_s.shape[0], overlap, texture, vhi_image, tolerance, version, rng, jobs_shm_name,
                             job_id + 0)
     texture = np.ascontiguousarray(np.flip(texture, axis=(0, 1)))
 
@@ -209,7 +282,7 @@ def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, p_str
     return texture
 
 
-def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, p_strips, rng, jobs_shm_name, job_id):
+def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, version, p_strips, rng, jobs_shm_name, job_id):
     shm_text = None
     vi_hs = np.ascontiguousarray(np.flipud(hs))
 
@@ -218,15 +291,15 @@ def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, p_stri
         shm_text = SharedMemory(create=True, size=size)
         texture = np.ndarray((vis.shape[0], hs.shape[1], vi_image.shape[2]), dtype=vi_image.dtype, buffer=shm_text.buf)
     else:
-        texture = np.zeros((vis.shape[0], hs.shape[1], vi_image.shape[2]))
+        texture = np.zeros((vis.shape[0], hs.shape[1], vi_image.shape[2])).astype(vi_image.dtype)
 
     texture[:hs.shape[0], :hs.shape[1]] = vi_hs[:, :]
     texture[hs.shape[0]:vis.shape[0], :vis.shape[1]] = vis[hs.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, hs.shape[0], overlap, shm_text.name, vi_image, tolerance, p_strips, rng,
+        fill_quad_ps(rows, columns, hs.shape[0], overlap, shm_text.name, vi_image, tolerance, version, p_strips, rng,
                      jobs_shm_name, job_id + p_strips * 1)
     else:
-        texture = fill_quad(rows, columns, hs.shape[0], overlap, texture, vi_image, tolerance, rng, jobs_shm_name,
+        texture = fill_quad(rows, columns, hs.shape[0], overlap, texture, vi_image, tolerance, version, rng, jobs_shm_name,
                             job_id + 1)
     texture = np.ascontiguousarray(np.flipud(texture))
 
@@ -236,7 +309,7 @@ def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, p_stri
     return texture
 
 
-def quad4(vs, his, hi_image, rows: int, columns: int, overlap, tolerance, p_strips, rng, jobs_shm_name, job_id):
+def quad4(vs, his, hi_image, rows: int, columns: int, overlap, tolerance, version, p_strips, rng, jobs_shm_name, job_id):
     shm_text = None
     hi_vs = np.ascontiguousarray(np.fliplr(vs))
 
@@ -245,15 +318,15 @@ def quad4(vs, his, hi_image, rows: int, columns: int, overlap, tolerance, p_stri
         shm_text = SharedMemory(create=True, size=size)
         texture = np.ndarray((vs.shape[0], his.shape[1], hi_image.shape[2]), dtype=hi_image.dtype, buffer=shm_text.buf)
     else:
-        texture = np.zeros((vs.shape[0], his.shape[1], hi_image.shape[2]))
+        texture = np.zeros((vs.shape[0], his.shape[1], hi_image.shape[2])).astype(hi_image.dtype)
 
     texture[:his.shape[0], :his.shape[1]] = his[:, :]
     texture[his.shape[0]:vs.shape[0], :vs.shape[1]] = hi_vs[his.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, his.shape[0], overlap, shm_text.name, hi_image, tolerance, p_strips, rng,
+        fill_quad_ps(rows, columns, his.shape[0], overlap, shm_text.name, hi_image, tolerance, version, p_strips, rng,
                      jobs_shm_name, job_id + p_strips * 2)
     else:
-        texture = fill_quad(rows, columns, his.shape[0], overlap, texture, hi_image, tolerance, rng, jobs_shm_name,
+        texture = fill_quad(rows, columns, his.shape[0], overlap, texture, hi_image, tolerance, version, rng, jobs_shm_name,
                             job_id + 2)
     texture = np.ascontiguousarray(np.fliplr(texture))
 
@@ -263,7 +336,7 @@ def quad4(vs, his, hi_image, rows: int, columns: int, overlap, tolerance, p_stri
     return texture
 
 
-def quad3(vs, hs, image, rows: int, columns: int, overlap, tolerance, p_strips, rng, jobs_shm_name, job_id):
+def quad3(vs, hs, image, rows: int, columns: int, overlap, tolerance, version, p_strips, rng, jobs_shm_name, job_id):
     shm_text = None
 
     if p_strips > 1:
@@ -271,15 +344,15 @@ def quad3(vs, hs, image, rows: int, columns: int, overlap, tolerance, p_strips, 
         shm_text = SharedMemory(create=True, size=size)
         texture = np.ndarray((vs.shape[0], hs.shape[1], image.shape[2]), dtype=image.dtype, buffer=shm_text.buf)
     else:
-        texture = np.zeros((vs.shape[0], hs.shape[1], image.shape[2]))
+        texture = np.zeros((vs.shape[0], hs.shape[1], image.shape[2])).astype(image.dtype)
 
     texture[:hs.shape[0], :hs.shape[1]] = hs[:, :]
     texture[hs.shape[0]:vs.shape[0], :vs.shape[1]] = vs[hs.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, vs.shape[1], overlap, shm_text.name, image, tolerance, p_strips, rng,
+        fill_quad_ps(rows, columns, vs.shape[1], overlap, shm_text.name, image, tolerance, version, p_strips, rng,
                      jobs_shm_name, job_id + p_strips * 3)
     else:
-        return fill_quad(rows, columns, vs.shape[1], overlap, texture, image, tolerance, rng, jobs_shm_name, job_id + 3)
+        return fill_quad(rows, columns, vs.shape[1], overlap, texture, image, tolerance, version, rng, jobs_shm_name, job_id + 3)
     texture = texture.copy()
 
     if p_strips > 1:
@@ -288,7 +361,7 @@ def quad3(vs, hs, image, rows: int, columns: int, overlap, tolerance, p_strips, 
     return texture
 
 
-def fill_quad_ps(rows, columns, block_size, overlap, texture_shared_mem_name, image, tolerance, total_procs, rng,
+def fill_quad_ps(rows, columns, block_size, overlap, version, texture_shared_mem_name, image, tolerance, total_procs, rng,
                  jobs_shm_name,
                  job_id):
     from joblib import Parallel, delayed
@@ -307,6 +380,7 @@ def fill_quad_ps(rows, columns, block_size, overlap, texture_shared_mem_name, im
         np_coord[2 * ip + 1] = 1
 
     def fill_rows(pid, coord_shared_list_name, texture_shm_name, sub_job_id):
+        find_patch_both = get_find_patch_both_method(version)
         shm_jobs = SharedMemory(name=jobs_shm_name)
         coord_jobs_array = np.ndarray((2 + sub_job_id,), dtype=np.dtype('uint32'), buffer=shm_jobs.buf)
 
@@ -338,7 +412,7 @@ def fill_quad_ps(rows, columns, block_size, overlap, texture_shared_mem_name, im
                                 (blk_index_i - block_size + overlap):(blk_index_i + overlap),
                                 blk_index_j:(blk_index_j + block_size)]
 
-                patch_block = findPatchBoth(ref_block_left, ref_block_top, image, block_size, overlap, tolerance, rng)
+                patch_block = find_patch_both(ref_block_left, ref_block_top, image, block_size, overlap, tolerance, rng)
                 min_cut_patch = getMinCutPatchBoth(ref_block_left, ref_block_top, patch_block, block_size, overlap)
 
                 texture[blk_index_i:(blk_index_i + block_size), blk_index_j:(blk_index_j + block_size)] = min_cut_patch
@@ -352,4 +426,3 @@ def fill_quad_ps(rows, columns, block_size, overlap, texture_shared_mem_name, im
 
     shm_coord.close()
     shm_coord.unlink()
-    return
