@@ -1,13 +1,13 @@
 from .quilting import generate_texture, generate_texture_parallel
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing import Event
+from .types import UiCoordData
 from threading import Thread
 from comfy import utils
 import numpy as np
 import numpy.random
 import torch
 import cv2
-
 
 # TODO add nodes where user defines output's height and width instead of scale
 
@@ -148,10 +148,12 @@ class ImageQuilting:
 
         if parallelization_lvl == 0:
             texture = generate_texture(
-                src, block_size, overlap, out_h, out_w, tolerance, version, rng, shm_name, 0)
+                src, block_size, overlap, out_h, out_w, tolerance, version, rng,
+                UiCoordData(shm_name, 0))
         else:
             texture = generate_texture_parallel(
-                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng, shm_name, 0)
+                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng,
+                UiCoordData(shm_name, 0))
 
         if version == 2:
             texture = cv2.cvtColor(texture, cv2.COLOR_LAB2RGB)
@@ -171,10 +173,10 @@ class ImageQuilting:
 
             if parallelization_lvl == 0:
                 result = generate_texture(image, block_size, overlap, outH, outW, tolerance, version, rng,
-                                          jobs_shm_name, job_id)
+                                          UiCoordData(jobs_shm_name, job_id))
             else:
                 result = generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance, version, 1, rng,
-                                                   jobs_shm_name, job_id)
+                                                   UiCoordData(jobs_shm_name, job_id))
 
             if version == 2:
                 result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
@@ -234,10 +236,12 @@ class LatentQuilting:
 
         if parallelization_lvl == 0:
             texture = generate_texture(
-                src, block_size, overlap, out_h, out_w, tolerance, version, rng, shm_name, 0)
+                src, block_size, overlap, out_h, out_w, tolerance, version, rng,
+                UiCoordData(shm_name, 0))
         else:
             texture = generate_texture_parallel(
-                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng, shm_name, 0)
+                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng,
+                UiCoordData(shm_name, 0))
 
         terminate_generation(finish_event, shm_jobs, t)
         texture = np.moveaxis(texture, -1, 0)
@@ -254,11 +258,11 @@ class LatentQuilting:
             if parallelization_lvl == 0:
                 result = generate_texture(
                     latent, block_size, overlap, outH, outW, tolerance, version, rng,
-                    jobs_shm_name, job_id)
+                    UiCoordData(jobs_shm_name, job_id))
             else:
                 result = generate_texture_parallel(
                     latent, block_size, overlap, outH, outW, tolerance, version, 1, rng,
-                    jobs_shm_name, job_id)
+                    UiCoordData(jobs_shm_name, job_id))
             result = np.moveaxis(result, -1, 0)
             return torch.from_numpy(result)
 
