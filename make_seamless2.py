@@ -62,15 +62,17 @@ def seamless_horizontal(use_parallel, image, block_size, overlap, tolerance, ver
 
     #___________________________________________________________________________________
 
+    image = np.roll(image, +block_size//2, axis=1)
+
     # left & right overlap errors
     lo_errs = cv.matchTemplate(image=aux_texture[:, :-block_size],
-                               templ=image[:overlap, :], method=cv.TM_SQDIFF)
+                               templ=image[:overlap, :], method=cv.TM_CCOEFF_NORMED)
     ro_errs = cv.matchTemplate(image=np.roll(aux_texture, -block_size + overlap, axis=1)[:, :-block_size],
-                               templ=image[block_size - overlap:block_size, :], method=cv.TM_SQDIFF)
+                               templ=image[block_size - overlap:block_size, :], method=cv.TM_CCOEFF_NORMED)
 
     err_mat = np.add(lo_errs, ro_errs) if version <= 1 else np.minimum(lo_errs, ro_errs)
     min_val = np.min(err_mat[err_mat > 0 if tolerance > 0 else True])  # ignore zeroes to enforce tolerance usage
-    y, x = np.nonzero(err_mat <= (1.0 + tolerance) * min_val)
+    y, x = np.nonzero(err_mat <= min_val)  # ignore tolerance here, choose best
     c = rng.integers(len(y))
     y, x = y[c], x[c]
 
@@ -105,17 +107,20 @@ def seamless_vertical(use_parallel, image, block_size, overlap, tolerance, versi
 # so that the seam is positioned the same way in both solutions; then just reuse the squares patches code
 
 if __name__ == "__main__":
-    img = cv.imread("./t16.png", cv.IMREAD_COLOR)
+    img = cv.imread("./t166.png", cv.IMREAD_COLOR)
     rng = np.random.default_rng(1300)
 
-    img_sh = seamless_horizontal(True, img, 64, 26, .1, 1, 16, rng, None)
+    bs = round(img.shape[0]/1.6)
+    ov = round(.38* bs)
+
+    img_sh = seamless_horizontal(True, img, bs, ov, .1, 1, 50, rng, None)
     img_sh_tiled = np.empty((img_sh.shape[0], img_sh.shape[1] * 2, img_sh.shape[2]))
     img_sh_tiled[:, :img_sh.shape[1]] = img_sh
     img_sh_tiled[:, img_sh.shape[1]:] = img_sh
     cv.imwrite("./h_seamless_alt.png", img_sh_tiled)
 
-    img_sv = seamless_vertical(True, img, 64, 26, .1, 1, 16, rng, None)
-    img_sv_tiled = np.empty((img_sv.shape[0] * 2, img_sv.shape[1], img_sv.shape[2]))
-    img_sv_tiled[:img_sv.shape[0], :] = img_sv
-    img_sv_tiled[img_sv.shape[0]:, :] = img_sv
-    cv.imwrite("./v_seamless_alt.png", img_sv_tiled)
+    #img_sv = seamless_vertical(True, img, bs, ov, .0001, 1, 16, rng, None)
+    #img_sv_tiled = np.empty((img_sv.shape[0] * 2, img_sv.shape[1], img_sv.shape[2]))
+    #img_sv_tiled[:img_sv.shape[0], :] = img_sv
+    #img_sv_tiled[img_sv.shape[0]:, :] = img_sv
+    #cv.imwrite("./v_seamless_alt.png", img_sv_tiled)
