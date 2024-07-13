@@ -75,7 +75,7 @@ def seamless_horizontal(use_parallel, image, block_size, overlap, tolerance, ver
 
     err_mat = np.add(lo_errs, ro_errs) if version <= 1 else np.minimum(lo_errs, ro_errs)
     min_val = np.min(err_mat[err_mat > 0 if tolerance > 0 else True])  # ignore zeroes to enforce tolerance usage
-    y, x = np.nonzero(err_mat <= min_val)  # ignore tolerance here, choose best
+    y, x = np.nonzero(err_mat <= min_val)  # ignore tolerance here, choose only from the best values
     c = rng.integers(len(y))
     y, x = y[c], x[c]
 
