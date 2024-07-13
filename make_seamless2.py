@@ -66,9 +66,9 @@ def seamless_horizontal(use_parallel, image, block_size, overlap, tolerance, ver
 
     # left & right overlap errors
     lo_errs = cv.matchTemplate(image=aux_texture[:, :-block_size],
-                               templ=image[:overlap, :], method=cv.TM_CCOEFF_NORMED)
+                               templ=image[:overlap, :], method=cv.TM_SQDIFF)
     ro_errs = cv.matchTemplate(image=np.roll(aux_texture, -block_size + overlap, axis=1)[:, :-block_size],
-                               templ=image[block_size - overlap:block_size, :], method=cv.TM_CCOEFF_NORMED)
+                               templ=image[block_size - overlap:block_size, :], method=cv.TM_SQDIFF)
 
     err_mat = np.add(lo_errs, ro_errs) if version <= 1 else np.minimum(lo_errs, ro_errs)
     min_val = np.min(err_mat[err_mat > 0 if tolerance > 0 else True])  # ignore zeroes to enforce tolerance usage
