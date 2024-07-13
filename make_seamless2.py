@@ -60,15 +60,18 @@ def seamless_horizontal(use_parallel, image, block_size, overlap, tolerance, ver
 
         return aux_texture
 
+    #out_h = image.shape[0] + block_size
+    #aux_texture = just_h_extension_BAD_IDEA_DELETE_LATER(out_h, out_w)
+
     #___________________________________________________________________________________
 
     image = np.roll(image, +block_size//2, axis=1)
 
     # left & right overlap errors
     lo_errs = cv.matchTemplate(image=aux_texture[:, :-block_size],
-                               templ=image[:overlap, :], method=cv.TM_SQDIFF)
+                               templ=image[:, :overlap], method=cv.TM_SQDIFF)
     ro_errs = cv.matchTemplate(image=np.roll(aux_texture, -block_size + overlap, axis=1)[:, :-block_size],
-                               templ=image[block_size - overlap:block_size, :], method=cv.TM_SQDIFF)
+                               templ=image[:, block_size - overlap:block_size], method=cv.TM_SQDIFF)
 
     err_mat = np.add(lo_errs, ro_errs) if version <= 1 else np.minimum(lo_errs, ro_errs)
     min_val = np.min(err_mat[err_mat > 0 if tolerance > 0 else True])  # ignore zeroes to enforce tolerance usage
@@ -77,11 +80,11 @@ def seamless_horizontal(use_parallel, image, block_size, overlap, tolerance, ver
     y, x = y[c], x[c]
 
     # "fake" block will only contain the overlap, in order to re-use existing function.
-    fake_left_block = np.zeros((image.shape[0], image.shape[0], image.shape[2])).astype(image.dtype)
-    fake_right_block = np.zeros((image.shape[0], image.shape[0], image.shape[2])).astype(image.dtype)
+    fake_left_block = np.empty((image.shape[0], image.shape[0], image.shape[2])).astype(image.dtype)
+    fake_right_block = np.empty((image.shape[0], image.shape[0], image.shape[2])).astype(image.dtype)
     fake_left_block[:, -overlap:] = image[:, :overlap]
     fake_right_block[:, :overlap] = image[:, block_size - overlap:block_size]
-    fake_block_sized_patch = np.zeros((image.shape[0], image.shape[0], image.shape[2])).astype(image.dtype)
+    fake_block_sized_patch = np.empty((image.shape[0], image.shape[0], image.shape[2])).astype(image.dtype)
     fake_block_sized_patch[:, :overlap] = aux_texture[y:y + image.shape[0], x:x + overlap]
     fake_block_sized_patch[:, -overlap:] = aux_texture[y:y + image.shape[0], x + block_size - overlap:x + block_size]
     left_side_patch = getMinCutPatchHorizontal(fake_left_block, fake_block_sized_patch, image.shape[0], overlap)
