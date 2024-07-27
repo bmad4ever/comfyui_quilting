@@ -139,30 +139,18 @@ def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.ra
     bmo = block_size - overlap
 
     src_h, src_w = image.shape[:2]
-    out_h = src_h
-    #strip_w = block_size - overlap * 2
-    out_w = src_w #if keep_src_dims else src_w + strip_w
-    n_h = int(ceil((out_h - block_size) / bmo))
+    n_h = int(ceil((src_h - block_size) / bmo))
 
-    texture_map_h = block_size + n_h * bmo
-    texture_map = np.zeros((texture_map_h, out_w, image.shape[-1])).astype(image.dtype)
+    texture_map = np.zeros((src_h, src_w, image.shape[-1])).astype(image.dtype)
     texture_map[:src_h, :src_w] = image
 
+    # roll texture map to allow overlapping between left and right blocks.
+    # this allows for big block sizes, and, consequently, for faster generations
     left_blocks = np.roll(texture_map, block_size//2-overlap+block_size, axis=1)[:, :block_size]
     right_blocks= np.roll(texture_map, -round(block_size/2)+overlap, axis=1)[:, :block_size]
 
-    #texture_map = np.roll(  # roll leftmost block to the right edge, and then some if keeping original size
-    #    texture_map, -block_size + (overlap - block_size // 2 if keep_src_dims else 0), axis=1)
+    # center v seam at half block distance of the left corner
     texture_map = np.roll(texture_map, block_size//2, axis=1)
-
-    for y in range(out_h, texture_map_h):  # "extend" margin pixels
-        texture_map[y, :] = texture_map[out_h - 1, :]
-
-    # patch horizontal boundaries
-    #x1 = out_w - 2 * block_size + overlap
-    #x2 = x1 + block_size
-    #print(x1)
-    #print(x2)
 
     # get 1st patch
     ref_block_left = left_blocks[:block_size, :block_size]
@@ -173,35 +161,39 @@ def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.ra
     min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, None, None,
                                            patch_block, block_size, overlap)
     texture_map[:block_size, :block_size] = min_cut_patch
-    #texture_map[:block_size, x1:x2] *= .5 #  debug, check 1st tile placement
 
-    for y in range(1, n_h + 1):
+    for y in range(1, n_h):
         blk_1y = y * bmo  # block top corner y
         blk_2y = blk_1y + block_size  # block bottom corner y
 
-        # find adjacent blocks, and the min errors independently
+        # get adjacent blocks
         ref_block_left = left_blocks[blk_1y:blk_2y, :block_size]
         ref_block_right = right_blocks[blk_1y:blk_2y, :block_size]
-        if (top_block_y_offset := blk_1y - block_size + overlap) < 0:
-            ref_block_top = np.zeros((block_size, block_size, image.shape[-1]))
-            ref_block_top[block_size + top_block_y_offset:, :] = texture_map[0:-top_block_y_offset, :block_size]
-        else:
-            ref_block_top = texture_map[(blk_1y - block_size + overlap):(blk_1y + overlap), :block_size]
+        ref_block_top = texture_map[(blk_1y - bmo):(blk_1y + overlap), :block_size]
 
-        patch_block = find_4way_patch_v2(
-            ref_block_left, ref_block_right, ref_block_top, None, lookup_texture, block_size, overlap, tolerance,
-            rng)  #, fnc)
+        patch_block = find_4way_patch_v2(ref_block_left, ref_block_right, ref_block_top, None,
+                                         lookup_texture, block_size, overlap, tolerance, rng)
         min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, None,
                                                patch_block, block_size, overlap)
 
         texture_map[blk_1y:blk_2y, :block_size] = min_cut_patch
-        #texture_map[blk_1y:blk_2y, :block_size] *= 2  # debug, check stripe location
 
         #coord_jobs_array[1 + job_id] += nW
         #if coord_jobs_array[0] > 0:
         #    return textureMap
 
-    return texture_map[:out_h, :out_w]
+    # fill last block
+    ref_block_left = left_blocks[-block_size:, :block_size]
+    ref_block_right = right_blocks[-block_size:, :block_size]
+    ref_block_top = np.empty_like(ref_block_left)   # only copy overlap
+    ref_block_top[-overlap:, :] = texture_map[-block_size:-block_size+overlap, :block_size]
+    patch_block = find_4way_patch_v2(ref_block_left, ref_block_right, ref_block_top, None,
+                                     lookup_texture, block_size, overlap, tolerance, rng)
+    min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, None,
+                                           patch_block, block_size, overlap)
+    texture_map[-block_size:, :block_size] = min_cut_patch
+
+    return texture_map
 
 
 def getMinCutPatchMaskHorizontal(block1, block2, blocksize, overlap):
@@ -387,7 +379,6 @@ def patch_horizontal_seam(texture_to_patch, lookup_texture, block_size, overlap,
     patch = get_4way_min_cut_patch(adj_lft_blk, None, adj_top_blk, adj_btm_blk,
                                    patch, block_size, overlap)
     texture_to_patch[ys:ye, xs - overlap:xe - overlap] = patch
-    #texture_to_patch[ys:ye, xs-overlap:xe-overlap] = texture_to_patch[ys:ye, xs-overlap:xe-overlap]/2   # debug patch location
 
     # PATCH H SEAM -> RIGHT PATCH
     adj_top_blk = np.roll(texture_to_patch, ye - overlap, axis=0)[-block_size:, xs + overlap:xe + overlap]
@@ -399,7 +390,6 @@ def patch_horizontal_seam(texture_to_patch, lookup_texture, block_size, overlap,
     patch = get_4way_min_cut_patch(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
                                    patch, block_size, overlap)
     texture_to_patch[ys:ye, xs + overlap:xe + overlap] = patch
-    #texture_to_patch[ys:ye, xs + overlap:xe + overlap] = texture_to_patch[ys:ye, xs + overlap:xe + overlap] / 2  # debug patch location
     return texture_to_patch
 
 
@@ -409,9 +399,8 @@ if __name__ == "__main__":
 
     ags = 30
     use_parallel = True
-    bs = round(img.shape[0]/2.1)
-    #if bs % 2 != 0:
-    #    bs += 1
+    bs = round(img.shape[0]/2.6)
+    #bs = 168
     ov = round(.4 * bs)
     print(f"block size = {bs}  ;  overlap = {ov}")
 
