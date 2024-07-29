@@ -11,7 +11,11 @@ from custom_nodes.comfyui_quilting.types import UiCoordData
 from custom_nodes.comfyui_quilting.quilting import generate_texture, generate_texture_parallel, fill_row, fill_quad
 from custom_nodes.comfyui_quilting.make_seamless import get_4way_min_cut_patch
 from custom_nodes.comfyui_quilting.jena2020.generate import getMinCutPatchHorizontal
-from make_seamless import find_4way_patch_v2, patch_horizontal_seam
+from make_seamless import patch_horizontal_seam
+
+
+
+
 
 
 def seamless_horizontal( image, block_size, overlap, version, lookup_texture, rng,
@@ -79,7 +83,7 @@ def seamless_both(image, block_size, overlap, version, lookup_texture, rng,
     # center seam & patch it
     texture = np.roll(texture, texture.shape[0]//2, axis=0)
     texture = np.roll(texture, texture.shape[1]//2 - block_size//2, axis=1)
-    texture = patch_horizontal_seam(texture, lookup_texture, block_size, overlap, rng)
+    texture = patch_horizontal_seam(texture, lookup_texture, block_size, overlap, 0, rng)
 
     return texture
 

@@ -1,11 +1,11 @@
 import numpy as np
 from math import ceil
-from itertools import product
-# from .quilting.generate import inf, getMinCutPatchBoth
 import cv2 as cv  # if possible, remove this dependency
 
 from custom_nodes.comfyui_quilting.quilting import generate_texture, generate_texture_parallel, fill_row, fill_quad
 from custom_nodes.comfyui_quilting.jena2020.generate import getMinCutPatchHorizontal
+from custom_nodes.comfyui_quilting.patch_search import get_generic_find_patch_method
+from .types import UiCoordData
 
 #==================================================
 
@@ -13,115 +13,11 @@ from custom_nodes.comfyui_quilting.jena2020.generate import getMinCutPatchHorizo
 inf = float('inf')
 
 
-# IMPORTANT NOTES :
-# *  find_horizontal_transition_patch uses the maximum of the errors from all adjacency instead of the sum
-# This might actually be better even when generating some textures
-#   since it minimizes the "worst" combo, not the sum of errors.
-# After testing, maybe should consider changing the texture generation to do the same
-# find_vertical_transition_patch uses sum and HAS NOT BEEN TESTED
-# *  code already "adapted" to use blur in the patches masks.
-# Mind that blur can make transition worse, only useful in some cases, so, if added, must be OPTIONAL!
-
-# TODO -> allow to setup different error criteria. e.g. max median, sum of means, etc...
-# TODO -> allow to blur patches' edges
-#  Ideally these options should also be available in the previous implemented quilting solution,
-#  so it might require some refactoring... ( O__o) hmmmm... ... ...
-
-#==================================================
-def find_horizontal_transition_patch(ref_block_left, ref_block_right, ref_block_top,
-                                     texture, block_size, overlap, tolerance,
-                                     rng: np.random.Generator,
-                                     fnc=np.maximum
-                                     ):
-    '''
-    Find the best horizontal patch to fit between two blocks.
-    Top block is optional; if provided is also accounted for when computing the error.
-    '''
-    h, w = texture.shape[:2]
-    err_mat = np.zeros((h - block_size, w - block_size)) + inf
-    bmo = block_size - overlap
-    for i, j in product(range(h - block_size), range(w - block_size)):
-        rms_val = ((texture[i:i + block_size, j + bmo:j + block_size] - ref_block_right[:, :overlap]) ** 2).mean()
-        rms_val = fnc(rms_val,
-                      ((texture[i:i + block_size, j:j + overlap] - ref_block_left[:, -overlap:]) ** 2).mean())
-        if ref_block_top is not None:
-            rms_val = fnc(rms_val,
-                          ((texture[i:i + overlap, j:j + block_size] - ref_block_top[-overlap:, :]) ** 2).mean())
-
-        if rms_val > 0:
-            err_mat[i, j] = rms_val
-
-    min_val = np.min(err_mat)
-    y, x = np.nonzero(err_mat < (1.0 + tolerance) * min_val)
-    c = rng.integers(len(y))
-    y, x = y[c], x[c]
-    return texture[y:y + block_size, x:x + block_size]
-
-
-def find_4way_patch_v2(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
-                       texture, block_size, overlap, tolerance,
-                       rng: np.random.Generator
-                       ):
-    blks_sqdiffs = []
-    if ref_block_left is not None:
-        blks_sqdiffs.append(cv.matchTemplate(
-            image=texture[:, :-block_size + overlap],
-            templ=ref_block_left[:, -overlap:], method=cv.TM_SQDIFF))
-    if ref_block_right is not None:
-        blks_sqdiffs.append(cv.matchTemplate(
-            image=np.roll(texture, -block_size + overlap, axis=1)[:, :-block_size + overlap],
-            templ=ref_block_right[:, :overlap], method=cv.TM_SQDIFF))
-    if ref_block_top is not None:
-        blks_sqdiffs.append(cv.matchTemplate(
-            image=texture[:-block_size + overlap, :],
-            templ=ref_block_top[-overlap:, :], method=cv.TM_SQDIFF))
-    if ref_block_bottom is not None:
-        blks_sqdiffs.append(cv.matchTemplate(
-            image=np.roll(texture, -block_size + overlap, axis=0)[:-block_size + overlap, :],
-            templ=ref_block_bottom[:overlap, :], method=cv.TM_SQDIFF))
-
-    err_mat = np.add.reduce(blks_sqdiffs)
-    min_val = np.min(err_mat[err_mat > 0 if tolerance > 0 else True])  # ignore zeroes to enforce tolerance usage
-    y, x = np.nonzero(err_mat <= (1.0 + tolerance) * min_val)
-    c = rng.integers(len(y))
-    y, x = y[c], x[c]
-    return texture[y:y + block_size, x:x + block_size]
-
-
-def find_4way_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
-                    texture, block_size, overlap, tolerance,
-                    rng: np.random.Generator,
-                    fnc=np.maximum
-                    ):
-    """
-    @param ref_block_right: optional, can be set to None to ignore this adjacency
-    """
-    h, w = texture.shape[:2]
-    err_mat = np.zeros((h - block_size, w - block_size)) + inf
-    bmo = block_size - overlap
-    for i, j in product(range(h - block_size), range(w - block_size)):
-        rms_val = ((texture[i:i + block_size, j:j + overlap] - ref_block_left[:, -overlap:]) ** 2).mean()
-        if ref_block_right is not None:
-            rms_val = fnc(rms_val,
-                          ((texture[i:i + block_size, j + bmo:j + block_size] - ref_block_right[:,
-                                                                                :overlap]) ** 2).mean())
-        rms_val = fnc(rms_val, ((texture[i:i + overlap, j:j + block_size] - ref_block_top[-overlap:, :]) ** 2).mean())
-        rms_val = fnc(rms_val, (
-                (texture[i + bmo:i + block_size, j:j + block_size] - ref_block_bottom[:overlap, :]) ** 2).mean())
-
-        if rms_val > 0:
-            err_mat[i, j] = rms_val
-
-    min_val = np.min(err_mat)
-    y, x = np.nonzero(err_mat < (1.0 + tolerance) * min_val)
-    c = rng.integers(len(y))
-    y, x = y[c], x[c]
-    return texture[y:y + block_size, x:x + block_size]
-
+def get_numb_of_blocks_to_fill_stripe(block_size, overlap, dim_length):
+    return int(ceil((dim_length - block_size) / (block_size - overlap)))
 
 def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.random.Generator,
-                               #keep_src_dims=True,
-                               lookup_texture=None):
+                               version: int = 1, lookup_texture=None, uicd: UiCoordData | None = None):
     """
     @param image: the image to make seamless; also be used to fetch the patches.
     @param fnc: when evaluating potential patches the errors of different adjacency will be combined using this function
@@ -139,28 +35,32 @@ def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.ra
     bmo = block_size - overlap
 
     src_h, src_w = image.shape[:2]
-    n_h = int(ceil((src_h - block_size) / bmo))
+    n_h = get_numb_of_blocks_to_fill_stripe(block_size, overlap, src_h)  #int(ceil((src_h - block_size) / bmo))
 
     texture_map = np.zeros((src_h, src_w, image.shape[-1])).astype(image.dtype)
     texture_map[:src_h, :src_w] = image
 
     # roll texture map to allow overlapping between left and right blocks.
     # this allows for big block sizes, and, consequently, for faster generations
-    left_blocks = np.roll(texture_map, block_size//2-overlap+block_size, axis=1)[:, :block_size]
-    right_blocks= np.roll(texture_map, -round(block_size/2)+overlap, axis=1)[:, :block_size]
+    left_blocks = np.roll(texture_map, block_size // 2 - overlap + block_size, axis=1)[:, :block_size]
+    right_blocks = np.roll(texture_map, -round(block_size / 2) + overlap, axis=1)[:, :block_size]
 
     # center v seam at half block distance of the left corner
-    texture_map = np.roll(texture_map, block_size//2, axis=1)
+    texture_map = np.roll(texture_map, block_size // 2, axis=1)
 
     # get 1st patch
     ref_block_left = left_blocks[:block_size, :block_size]
     ref_block_right = right_blocks[:block_size, :block_size]
 
-    patch_block = find_4way_patch_v2(
+    find_patch = get_generic_find_patch_method(version=version)
+
+    patch_block = find_patch(
         ref_block_left, ref_block_right, None, None, lookup_texture, block_size, overlap, tolerance, rng)  #, fnc)
     min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, None, None,
                                            patch_block, block_size, overlap)
     texture_map[:block_size, :block_size] = min_cut_patch
+    if uicd is not None and uicd.add_to_job_data_slot_and_check_interrupt(1):
+        return None
 
     for y in range(1, n_h):
         blk_1y = y * bmo  # block top corner y
@@ -171,27 +71,27 @@ def make_seamless_horizontally(image, block_size, overlap, tolerance, rng: np.ra
         ref_block_right = right_blocks[blk_1y:blk_2y, :block_size]
         ref_block_top = texture_map[(blk_1y - bmo):(blk_1y + overlap), :block_size]
 
-        patch_block = find_4way_patch_v2(ref_block_left, ref_block_right, ref_block_top, None,
-                                         lookup_texture, block_size, overlap, tolerance, rng)
+        patch_block = find_patch(ref_block_left, ref_block_right, ref_block_top, None,
+                                 lookup_texture, block_size, overlap, tolerance, rng)
         min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, None,
                                                patch_block, block_size, overlap)
 
         texture_map[blk_1y:blk_2y, :block_size] = min_cut_patch
-
-        #coord_jobs_array[1 + job_id] += nW
-        #if coord_jobs_array[0] > 0:
-        #    return textureMap
+        if uicd is not None and uicd.add_to_job_data_slot_and_check_interrupt(1):
+            return None
 
     # fill last block
     ref_block_left = left_blocks[-block_size:, :block_size]
     ref_block_right = right_blocks[-block_size:, :block_size]
-    ref_block_top = np.empty_like(ref_block_left)   # only copy overlap
-    ref_block_top[-overlap:, :] = texture_map[-block_size:-block_size+overlap, :block_size]
-    patch_block = find_4way_patch_v2(ref_block_left, ref_block_right, ref_block_top, None,
-                                     lookup_texture, block_size, overlap, tolerance, rng)
+    ref_block_top = np.empty_like(ref_block_left)  # only copy overlap
+    ref_block_top[-overlap:, :] = texture_map[-block_size:-block_size + overlap, :block_size]
+    patch_block = find_patch(ref_block_left, ref_block_right, ref_block_top, None,
+                             lookup_texture, block_size, overlap, tolerance, rng)
     min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, None,
                                            patch_block, block_size, overlap)
     texture_map[-block_size:, :block_size] = min_cut_patch
+    if uicd is not None and uicd.add_to_job_data_slot_and_check_interrupt(1):
+        return None
 
     return texture_map
 
@@ -292,104 +192,78 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
     return resBlock
 
 
-def make_seamless_vertically(image, block_size, overlap, tolerance, rng: np.random.Generator, lookup_texture=None):
+def make_seamless_vertically(image, block_size, overlap, tolerance, rng: np.random.Generator,
+                             version: int = 1, lookup_texture=None, uicd: UiCoordData | None = None):
     rotated_solution = make_seamless_horizontally(
-        np.rot90(image, 1), block_size, overlap, tolerance,
-        rng=rng, lookup_texture=None if lookup_texture is None else np.rot90(lookup_texture, 1))
-    return np.rot90(rotated_solution, -1).copy()
+        np.rot90(image, 1), block_size, overlap, tolerance, rng=rng, version=version,
+        lookup_texture=None if lookup_texture is None else np.rot90(lookup_texture, 1),
+        uicd=uicd)
+    return np.rot90(rotated_solution, -1).copy() if rotated_solution is not None else None
 
 
-def make_seamless_both(image, block_size, overlap, tolerance, rng: np.random.Generator, lookup_texture=None):
-    # image dims  >=  block_size + overlap * 2 , must be true so that
-    #  there is some overlap area available for the last patch - "the big square".
-    big_block_size = block_size + overlap * 2
-    assert image.shape[0] >= big_block_size
-    assert image.shape[1] >= big_block_size
-    # TODO -> add/modify asserts w/ respect to lookup texture
-
-    if lookup_texture is None:
-        lookup_texture = image
-
-    # patch the texture in both directions. the last stripe's endpoints won't loop yet.
-    vs = make_seamless_vertically(image, block_size, overlap, tolerance, rng, lookup_texture=lookup_texture)
-    hs_vs = make_seamless_horizontally(vs, block_size, overlap, tolerance, rng, lookup_texture=lookup_texture)
-
-    # ___ patch vertical stripe from 2nd operation w/ "the big square" ___
-    #   center the area to patch 1st, this will make the rolls in the next step easier
-    fs = np.roll(hs_vs, block_size - overlap + (hs_vs.shape[1] + block_size) // 2, axis=1)
-    fs = np.roll(fs, fs.shape[0] // 2 + block_size - overlap + block_size // 2, axis=0)
-
-    yc = (fs.shape[0] - block_size) // 2  # upper left corner coordinates
-    xc = (fs.shape[1] - block_size) // 2
-    t, b, l, r = yc - overlap, yc + block_size + overlap, xc - overlap, xc + block_size + overlap
-    #fs[t:b, l:r, :] *= 0.8  # debug, check roi
-    adj_top_blk = np.roll(fs, yc + block_size, axis=0)[-big_block_size:, l:r]
-    adj_btm_blk = np.roll(fs, -yc - block_size, axis=0)[:big_block_size, l:r]
-    adj_lft_blk = np.roll(fs, xc + block_size, axis=1)[t:b, -big_block_size:]
-    adj_rgt_blk = np.roll(fs, -xc - block_size, axis=1)[t:b, :big_block_size]
-    patch = find_4way_patch_v2(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
-                               lookup_texture, big_block_size, overlap, tolerance, rng)
-    patch = get_4way_min_cut_patch(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
-                                   patch, big_block_size, overlap)
-    fs[t:b, l:r, :] = patch
-    #fs[t:b, l:r, :] *= .5 # debug, check last patch bounds
-    return fs
-
-
-def make_seamless_both_v2(image, block_size, overlap, tolerance, rng: np.random.Generator, lookup_texture=None):
+def make_seamless_both(image, block_size, overlap, tolerance, rng: np.random.Generator,
+                       version: int = 1, lookup_texture=None, uicd: UiCoordData | None = None):
     assert image.shape[0] >= block_size
     assert image.shape[1] >= block_size + overlap * 2
-    # TODO -> add/modify asserts w/ respect to lookup texture
 
-    if lookup_texture is None:
-        lookup_texture = image
+    lookup_texture = image if lookup_texture is None else lookup_texture
+    assert lookup_texture.shape[0] >= block_size
+    assert lookup_texture.shape[1] >= block_size + overlap * 2
 
     # patch the texture in both directions. the last stripe's endpoints won't loop yet.
-    vs = make_seamless_vertically(image, block_size, overlap, tolerance, rng, lookup_texture=lookup_texture)
-    vs = np.roll(vs, -block_size // 2, axis=0)  # center future seam at stripes interception
-    hs_vs = make_seamless_horizontally(vs, block_size, overlap, tolerance, rng, lookup_texture=lookup_texture)
+    texture = make_seamless_vertically(image, block_size, overlap, tolerance, rng,
+                                  version=version, lookup_texture=lookup_texture, uicd=uicd)
+    if texture is not None:
+        texture = np.roll(texture, -block_size // 2, axis=0)  # center future seam at stripes interception
+        texture = make_seamless_horizontally(texture, block_size, overlap, tolerance, rng,
+                                       version=version, lookup_texture=lookup_texture, uicd=uicd)
+    if texture is None:
+        return None
 
     #   center the area to patch 1st, this will make the rolls in the next step easier
-    fs = np.roll(hs_vs, hs_vs.shape[0] // 2, axis=0)
-    fs = np.roll(fs, (fs.shape[1] - block_size) // 2, axis=1)
+    texture = np.roll(texture, texture.shape[0] // 2, axis=0)
+    texture = np.roll(texture, (texture.shape[1] - block_size) // 2, axis=1)
 
-    return patch_horizontal_seam(fs, lookup_texture, block_size, overlap, rng)
+    return patch_horizontal_seam(texture, lookup_texture, block_size, overlap, tolerance, rng, version=version, uicd=uicd)
 
 
-def patch_horizontal_seam(texture_to_patch, lookup_texture, block_size, overlap, rng: np.random.Generator):
+def patch_horizontal_seam(texture_to_patch, lookup_texture, block_size, overlap, tolerance,
+                          rng: np.random.Generator, version: int = 1, uicd: UiCoordData | None = None):
     """
     Patches the center of the texture
-    @param texture_to_patch:
-    @param lookup_texture:
-    @param block_size:
-    @param overlap:
-    @return:
     """
     ys = (texture_to_patch.shape[0] - block_size) // 2
     ye = ys + block_size
     xs = (texture_to_patch.shape[1] - block_size) // 2
     xe = xs + block_size
 
+    find_patch = get_generic_find_patch_method(version=version)
+
     # PATCH H SEAM -> LEFT PATCH
     adj_top_blk = np.roll(texture_to_patch, ye - overlap, axis=0)[-block_size:, xs - overlap:xe - overlap]
     adj_btm_blk = np.roll(texture_to_patch, -ye + overlap, axis=0)[:block_size, xs - overlap:xe - overlap]
     adj_lft_blk = np.roll(texture_to_patch, -xs, axis=1)[ys:ye, -block_size:]
-    patch = find_4way_patch_v2(adj_lft_blk, None, adj_top_blk, adj_btm_blk,
-                               lookup_texture, block_size, overlap, .000001, rng)#, fnc)
+    patch = find_patch(adj_lft_blk, None, adj_top_blk, adj_btm_blk,
+                       lookup_texture, block_size, overlap, tolerance, rng)
     patch = get_4way_min_cut_patch(adj_lft_blk, None, adj_top_blk, adj_btm_blk,
                                    patch, block_size, overlap)
     texture_to_patch[ys:ye, xs - overlap:xe - overlap] = patch
+    if uicd is not None and uicd.add_to_job_data_slot_and_check_interrupt(1):
+        return None
 
     # PATCH H SEAM -> RIGHT PATCH
     adj_top_blk = np.roll(texture_to_patch, ye - overlap, axis=0)[-block_size:, xs + overlap:xe + overlap]
     adj_btm_blk = np.roll(texture_to_patch, -ye + overlap, axis=0)[:block_size, xs + overlap:xe + overlap]
     adj_lft_blk = np.roll(texture_to_patch, -xs - overlap * 2, axis=1)[ys:ye, -block_size:]  # review this one
     adj_rgt_blk = np.roll(texture_to_patch, -xs - block_size, axis=1)[ys:ye, :block_size]
-    patch = find_4way_patch_v2(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
-                               lookup_texture, block_size, overlap, .000001, rng)#, fnc)
+    patch = find_patch(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
+                       lookup_texture, block_size, overlap, tolerance, rng)
     patch = get_4way_min_cut_patch(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk,
                                    patch, block_size, overlap)
     texture_to_patch[ys:ye, xs + overlap:xe + overlap] = patch
+    if uicd is not None and uicd.add_to_job_data_slot_and_check_interrupt(1):
+        return None
+
     return texture_to_patch
 
 
@@ -399,15 +273,16 @@ if __name__ == "__main__":
 
     ags = 30
     use_parallel = True
-    bs = round(img.shape[0]/2.6)
+    bs = round(img.shape[0] / 2.6)
     #bs = 168
     ov = round(.4 * bs)
     print(f"block size = {bs}  ;  overlap = {ov}")
 
-    tolerance = .0001
+    tolerance = 0
     version = 1
     out_w = img.shape[1] * ags
     out_h = img.shape[0] * ags
+
 
     def gen_lookup():
         lookup_texture = (
@@ -418,6 +293,8 @@ if __name__ == "__main__":
                                   tolerance, version, rng, None)
         )
         cv.imwrite("./lookup.png", lookup_texture)
+
+
     #gen_lookup()
     #quit()
 
@@ -444,7 +321,8 @@ if __name__ == "__main__":
 
     #bs = 73  #round(min(img.shape[:2]) / 5)
     #overlap = round(bs / 2.3)
-    img_sb = make_seamless_both_v2(img, bs, ov, 0, rng, lookup_texture=lookup_texture)  # .1 seems to low ; perhaps .2 is good
+    img_sb = make_seamless_both(img, bs, ov, 0, rng, version=1,
+                                lookup_texture=lookup_texture)  # .1 seems to low ; perhaps .2 is good
     cv.imwrite("./b_seamless_v2.png", img_sb)
 
     img_4tiles = np.empty((img_sb.shape[0] * 2, img_sb.shape[1] * 2, img_sb.shape[2]))
