@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from .make_seamless import (make_seamless_horizontally, make_seamless_vertically,
                             make_seamless_both, get_numb_of_blocks_to_fill_stripe)
 from .quilting import generate_texture, generate_texture_parallel
@@ -14,7 +16,7 @@ import cv2
 # TODO add nodes where user defines output's height and width instead of scale
 
 NODES_CATEGORY = "Bmad/CV/Quilting"
-
+SEAMLESS_DIRS = ["H", "V", "H & V"]  # options for seamless nodes
 
 QUILTING_SHARED_INPUT_TYPES = {
     # block size is given in pixels
@@ -96,9 +98,9 @@ def setup_pbar_seamless(ori, block_size, overlap, height, width, batch_len):
             total_steps = get_numb_of_blocks_to_fill_stripe(block_size, overlap, height)
         case _:
             total_steps = (
-                2 +
-                get_numb_of_blocks_to_fill_stripe(block_size, overlap, height) +
-                get_numb_of_blocks_to_fill_stripe(block_size, overlap, width)
+                    2 +
+                    get_numb_of_blocks_to_fill_stripe(block_size, overlap, height) +
+                    get_numb_of_blocks_to_fill_stripe(block_size, overlap, width)
             )
     return setup_pbar(total_steps, 0, batch_len)
 
@@ -123,8 +125,55 @@ def setup_pbar(total_steps, par_lvl, batch_len):
     return finished_event, t, shm_jobs.name, shm_jobs
 
 
+def unwrap_and_quilt(wrapped_func, image, job_id):
+    """quilting job when using batches"""
+    image = image.cpu().numpy()
+    result = wrapped_func(image, job_id)
+    return torch.from_numpy(result)
+
+
+def unwrap_and_quilt_seamless(wrapped_func, image, lookup, job_id):
+    """seamless quilting job when using batches"""
+    image = image.cpu().numpy()
+    if lookup is not None:
+        lookup = lookup.cpu().numpy()
+    result = wrapped_func(image, lookup, job_id)
+    return torch.from_numpy(result)
+
 
 class ImageQuilting:
+    @dataclass
+    class ImageQuiltingFuncWrapper:
+        """Wraps node functionality for easy re-use when using jobs."""
+
+        block_size: int
+        overlap: int
+        out_h: int
+        out_w: int
+        tolerance: float
+        parallelization_lvl: int
+        rng: numpy.random.Generator
+        version: int
+        jobs_shm_name: str
+
+        def __call__(self, image, job_id):
+            if self.version == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
+
+            if self.parallelization_lvl == 0:
+                result = generate_texture(
+                    image, self.block_size, self.overlap, self.out_h, self.out_w, self.tolerance,
+                    self.version, self.rng, UiCoordData(self.jobs_shm_name, job_id))
+            else:
+                result = generate_texture_parallel(
+                    image, self.block_size, self.overlap, self.out_h, self.out_w, self.tolerance,
+                    self.version, self.parallelization_lvl, self.rng, UiCoordData(self.jobs_shm_name, job_id))
+
+            if self.version == 2:
+                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
+
+            return result
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -157,56 +206,26 @@ class ImageQuilting:
         finish_event, t, shm_name, shm_jobs = \
             setup_pbar_quilting(block_size, overlap, out_h, out_w, parallelization_lvl, src.shape[0])
 
+        func = ImageQuilting.ImageQuiltingFuncWrapper(
+            block_size, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
+
         if src.shape[0] > 1:  # if image batch
-            texture_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance, version,
-                                                  parallelization_lvl, rng, shm_name)
+            texture_batch = self.batch_using_jobs(func, src)
             terminate_generation(finish_event, shm_jobs, t)
             return (texture_batch,)
 
         # ____ if single image
         src = src.cpu().numpy().squeeze()
-        if version == 2:
-            src = cv2.cvtColor(src, cv2.COLOR_RGB2Lab)
-
-        if parallelization_lvl == 0:
-            texture = generate_texture(
-                src, block_size, overlap, out_h, out_w, tolerance, version, rng,
-                UiCoordData(shm_name, 0))
-        else:
-            texture = generate_texture_parallel(
-                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng,
-                UiCoordData(shm_name, 0))
-
-        if version == 2:
-            texture = cv2.cvtColor(texture, cv2.COLOR_LAB2RGB)
+        texture = func(src, 0)
         texture = torch.from_numpy(texture).unsqueeze(0)
-
         terminate_generation(finish_event, shm_jobs, t)
         return (texture,)
 
     @staticmethod
-    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng, jobs_shm_name):
+    def batch_using_jobs(wrapped_func, src):
         from joblib import Parallel, delayed
-
-        def unwrap_and_quilt(img_as_tensor, job_id):
-            image = img_as_tensor.cpu().numpy()
-            if version == 2:
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
-
-            if parallelization_lvl == 0:
-                result = generate_texture(image, block_size, overlap, outH, outW, tolerance, version, rng,
-                                          UiCoordData(jobs_shm_name, job_id))
-            else:
-                result = generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance, version, 1, rng,
-                                                   UiCoordData(jobs_shm_name, job_id))
-
-            if version == 2:
-                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
-            return torch.from_numpy(result)
-
         results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
-            delayed(unwrap_and_quilt)(src[i], i) for i in range(src.shape[0]))
-
+            delayed(unwrap_and_quilt)(wrapped_func, src[i], i) for i in range(src.shape[0]))
         return torch.stack(results)
 
 
@@ -265,7 +284,8 @@ class LatentQuilting:
         return ({"samples": texture},)
 
     @staticmethod
-    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng, jobs_shm_name):
+    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng,
+                         jobs_shm_name):
         from joblib import Parallel, delayed
 
         def unwrap_and_quilt(latent, job_id):
@@ -289,14 +309,43 @@ class LatentQuilting:
 
 
 class ImageMakeSeamlessMB:
-    """
-    Transition stripe is built using overlapping square patches.
-    """
-    SEAMLESS_DIR = {
-        "H": make_seamless_horizontally,
-        "V": make_seamless_vertically,
-        "H & V": make_seamless_both
-    }
+    """Transition stripe is built using overlapping square patches."""
+
+    @dataclass
+    class SeamlessFuncWrapper:
+        """Wraps node functionality for easy re-use when using jobs."""
+
+        ori: str
+        block_size: int
+        overlap: int
+        tolerance: float
+        rng: numpy.random.Generator
+        version: int
+        jobs_shm_name: str
+
+        def __call__(self, image, lookup, job_id):
+            from .make_seamless import make_seamless_horizontally, make_seamless_vertically, make_seamless_both
+
+            if self.version == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
+                if lookup is not None:
+                    lookup = cv2.cvtColor(lookup, cv2.COLOR_RGB2Lab) if lookup is not None else None
+
+            match self.ori:
+                case "H":
+                    func = make_seamless_horizontally
+                case "V":
+                    func = make_seamless_vertically
+                case ___:
+                    func = make_seamless_both
+
+            result = func(image, self.block_size, self.overlap, self.tolerance,
+                          self.rng, self.version, lookup, UiCoordData(self.jobs_shm_name, job_id))
+
+            if self.version == 2:
+                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
+
+            return result
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -305,7 +354,7 @@ class ImageMakeSeamlessMB:
         return {
             "required": {
                 "src": ("IMAGE",),
-                "ori": (list(cls.SEAMLESS_DIR.keys()), {"default": "H"}),
+                "ori": (SEAMLESS_DIRS, {"default": SEAMLESS_DIRS[0]}),
                 **inputs,
             },
             "optional": {
@@ -325,25 +374,34 @@ class ImageMakeSeamlessMB:
             block_size * QUILTING_SHARED_INPUT_TYPES["overlap"][1]["default"])
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
-        finish_event, t, shm_name, shm_jobs = \
-            setup_pbar_seamless(ori, block_size, overlap, h, w, 0)
-        uicd = UiCoordData(shm_name, 0)
+        finish_event, t, shm_name, shm_jobs = setup_pbar_seamless(ori, block_size, overlap, h, w, 0)
 
-        if src.shape[0] > 1:  # if image batch
-            return (None,)   # TODO
+        seamless_func = ImageMakeSeamlessMB.SeamlessFuncWrapper(
+            ori, block_size, overlap, tolerance, rng, version, shm_name)
+
+        if src.shape[0] > 1 or lookup is not None and lookup.shape[0] > 1:  # if image batch
+            texture_batch = self.batch_using_jobs(seamless_func, src, lookup)
+            terminate_generation(finish_event, shm_jobs, t)
+            return (texture_batch,)
 
         # ____ if single image
         src = src.cpu().numpy().squeeze()
         lookup = lookup.cpu().numpy().squeeze() if lookup is not None else None
-        if version == 2:
-            src = cv2.cvtColor(src, cv2.COLOR_RGB2Lab)
-            if lookup is not None:
-                lookup = cv2.cvtColor(lookup, cv2.COLOR_RGB2Lab) if lookup is not None else None
-
-        seamless_func = self.SEAMLESS_DIR[ori]
-        output = seamless_func(src, block_size, overlap, tolerance, rng, version, lookup, uicd)
-        if version == 2:
-            output = cv2.cvtColor(output, cv2.COLOR_LAB2RGB)
+        output = seamless_func(src, lookup, 0)
         output = torch.from_numpy(output).unsqueeze(0)
         terminate_generation(finish_event, shm_jobs, t)
-        return (output, )
+        return (output,)
+
+    @staticmethod
+    def batch_using_jobs(wrapped_func, src, lookup):
+        from joblib import Parallel, delayed
+        # process in the same fashion as lists
+        results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
+            delayed(unwrap_and_quilt_seamless)(
+                wrapped_func,
+                src[min(i, src.shape[0] - 1)],
+                lookup[min(i, lookup.shape[0] - 1)]
+                if lookup is not None else None,
+                i) for i in range(max(src.shape[0], lookup.shape[0])))
+        return torch.stack(results)
+
