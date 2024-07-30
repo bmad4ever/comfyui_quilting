@@ -402,7 +402,7 @@ def generate_texture(image, block_size, overlap, out_h, out_w, tolerance, versio
         return None
 
     # fill the rest
-    texture_map = fill_quad(n_w, n_h, block_size, overlap, texture_map, image, tolerance,
+    texture_map = fill_quad(n_h, n_w, block_size, overlap, texture_map, image, tolerance,
                             version, rng, uicd)
 
     # crop to final size
