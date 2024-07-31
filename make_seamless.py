@@ -1,13 +1,9 @@
-import numpy as np
-from math import ceil
-import cv2 as cv  # if possible, remove this dependency
-
-from custom_nodes.comfyui_quilting.quilting import generate_texture, generate_texture_parallel, fill_row, fill_quad
-from custom_nodes.comfyui_quilting.jena2020.generate import getMinCutPatchHorizontal
-from custom_nodes.comfyui_quilting.patch_search import get_generic_find_patch_method
+from .quilting import generate_texture, generate_texture_parallel
+from .patch_search import get_generic_find_patch_method
 from .types import UiCoordData
-
-#==================================================
+from math import ceil
+import numpy as np
+import cv2 as cv
 
 
 inf = float('inf')
@@ -265,69 +261,3 @@ def patch_horizontal_seam(texture_to_patch, lookup_texture, block_size, overlap,
         return None
 
     return texture_to_patch
-
-
-if __name__ == "__main__":
-    img = cv.imread("./t166.png", cv.IMREAD_COLOR)
-    rng = np.random.default_rng(1300)
-
-    ags = 30
-    use_parallel = True
-    bs = round(img.shape[0] / 2.6)
-    #bs = 168
-    ov = round(.4 * bs)
-    print(f"block size = {bs}  ;  overlap = {ov}")
-
-    tolerance = 0
-    version = 1
-    out_w = img.shape[1] * ags
-    out_h = img.shape[0] * ags
-
-
-    def gen_lookup():
-        lookup_texture = (
-            generate_texture_parallel(img, bs, ov, out_h, out_w,
-                                      tolerance, version, 1, rng, None)
-            if use_parallel
-            else generate_texture(img, bs, ov, out_h, out_w,
-                                  tolerance, version, rng, None)
-        )
-        cv.imwrite("./lookup.png", lookup_texture)
-
-
-    #gen_lookup()
-    #quit()
-
-    lookup_texture = cv.imread("./lookup.png", cv.IMREAD_COLOR)
-
-    #img_sh = make_seamless_horizontally(img, bs, ov, 0, rng, lookup_texture=lookup_texture)
-    #img_sh_tiled = np.empty((img_sh.shape[0], img_sh.shape[1]*2, img_sh.shape[2]))
-    #img_sh_tiled[:, :img_sh.shape[1]] = img_sh
-    #img_sh_tiled[:, img_sh.shape[1]:] = img_sh
-    #cv.imwrite("./h_seamless.png", img_sh_tiled)
-    #quit()
-
-    #img_sv = make_seamless_vertically(img, 64, 30, .00001, rng, lookup_texture=lookup_texture)
-    #img_sv_tiled = np.empty((img_sv.shape[0]*2, img_sv.shape[1], img_sv.shape[2]))
-    #img_sv_tiled[:img_sv.shape[0], :] = img_sv
-    #img_sv_tiled[img_sv.shape[0]:, :] = img_sv
-    #cv.imwrite("./v_seamless.png", img_sv_tiled)
-
-    #    Dev Note 03/07 -> w/ respect to potential usage:
-    # Unsure if this would be useful in latent space.
-    # Likely less noticeable due to lower resolution...
-    # but if diffusion is used the edges should change,
-    # so unless there is some safeguard in place it should be ratter useless.
-
-    #bs = 73  #round(min(img.shape[:2]) / 5)
-    #overlap = round(bs / 2.3)
-    img_sb = make_seamless_both(img, bs, ov, 0, rng, version=1,
-                                lookup_texture=lookup_texture)  # .1 seems to low ; perhaps .2 is good
-    cv.imwrite("./b_seamless_v2.png", img_sb)
-
-    img_4tiles = np.empty((img_sb.shape[0] * 2, img_sb.shape[1] * 2, img_sb.shape[2]))
-    img_4tiles[:img_sb.shape[0], :img_sb.shape[1]] = img_sb
-    img_4tiles[img_sb.shape[0]:, :img_sb.shape[1]] = img_sb
-    img_4tiles[:img_sb.shape[0], img_sb.shape[1]:] = img_sb
-    img_4tiles[img_sb.shape[0]:, img_sb.shape[1]:] = img_sb
-    cv.imwrite("./4b_seamless_v2.png", img_4tiles)

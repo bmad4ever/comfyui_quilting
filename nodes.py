@@ -115,10 +115,25 @@ def setup_pbar_seamless(ori, block_size, overlap, height, width, batch_len):
                     get_numb_of_blocks_to_fill_stripe(block_size, overlap, height) +
                     get_numb_of_blocks_to_fill_stripe(block_size, overlap, width)
             )
+    total_steps = total_steps * batch_len
+    return setup_pbar(total_steps, 0, batch_len)
+
+
+def setup_pbar_seamless_v2(ori, batch_len):
+    # 3 increments per big block + 2 for the "H & V" H Seam patch
+    match ori:
+        case "H & V":
+            total_steps = 2 + 3*2
+        case _:
+            total_steps = 3
+    total_steps = total_steps * batch_len
     return setup_pbar(total_steps, 0, batch_len)
 
 
 def setup_pbar(total_steps, par_lvl, batch_len):
+    """
+    @param total_steps: aggregate from all the jobs/batch items; not for a single job or batch item
+    """
     pbar: utils.ProgressBar = utils.ProgressBar(total_steps)
     finished_event = Event()
 
@@ -163,6 +178,11 @@ def unwrap_and_quilt_seamless(wrapped_func, image, lookup, job_id):
     result = torch.from_numpy(result)
     result = result.unsqueeze(0) if squeeze else result
     return result
+
+
+def overlap_percentage_to_pixels(block_size, overlap):
+    return int(block_size * overlap) if overlap > 0 else int(
+        block_size * QUILTING_SHARED_INPUT_TYPES["overlap"][1]["default"])
 
 # endregion AUX FUNCTIONS & CLASSES
 
@@ -213,8 +233,7 @@ class ImageQuilting:
     def compute(self, src, block_size, scale, overlap, tolerance, parallelization_lvl, seed, version):
         h, w = src.shape[1:3]
         out_h, out_w = int(scale * h), int(scale * w)
-        overlap = int(block_size * overlap) if overlap > 0 else int(
-            block_size * QUILTING_SHARED_INPUT_TYPES["overlap"][1]["default"])
+        overlap = overlap_percentage_to_pixels(block_size, overlap)
 
         # note: the input src should have normalized values, not 0 to 255
 
@@ -279,8 +298,7 @@ class LatentQuilting:
         src = src["samples"]
         h, w = src.shape[2:4]
         out_h, out_w = int(scale * h), int(scale * w)
-        overlap = int(block_size * overlap) if overlap > 0 else int(
-            block_size * QUILTING_SHARED_INPUT_TYPES["overlap"][1]["default"])
+        overlap = overlap_percentage_to_pixels(block_size, overlap)
 
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
@@ -351,6 +369,7 @@ class ImageMakeSeamlessMB:
     def INPUT_TYPES(cls):
         inputs = QUILTING_SHARED_INPUT_TYPES.copy()
         inputs.pop("parallelization_lvl")
+        inputs["version"][1]["min"] = 1
         return {
             "required": {
                 "src": ("IMAGE",),
@@ -370,14 +389,110 @@ class ImageMakeSeamlessMB:
         # note that src = lookup is the current algorithm policy when lookup is not provided.
         # this policy could change in the future, so do not apply it here too despite being idempotent.
         h, w = src.shape[1:3]
-        overlap = int(block_size * overlap) if overlap > 0 else int(
-            block_size * QUILTING_SHARED_INPUT_TYPES["overlap"][1]["default"])
+        overlap = overlap_percentage_to_pixels(block_size, overlap)
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
-        finish_event, t, shm_name, shm_jobs = setup_pbar_seamless(ori, block_size, overlap, h, w, 0)
+        lookup_batch_size = lookup.shape[0] if lookup is not None else 0
+        finish_event, t, shm_name, shm_jobs = setup_pbar_seamless(
+            ori, block_size, overlap, h, w, max(src.shape[0], lookup_batch_size))
 
         func = ImageMakeSeamlessMB.SeamlessFuncWrapper(
             ori, block_size, overlap, tolerance, rng, version, shm_name)
+
+        if src.shape[0] > 1 or lookup_batch_size > 1:  # if image batch
+            texture_batch = self.batch_using_jobs(func, src, lookup)
+            terminate_generation(finish_event, shm_jobs, t)
+            return (texture_batch,)
+
+        # ____ if single image
+        output = unwrap_and_quilt_seamless(func, src, lookup, 0)
+        terminate_generation(finish_event, shm_jobs, t)
+        return (output,)
+
+    @staticmethod
+    def batch_using_jobs(wrapped_func, src, lookup):
+        from joblib import Parallel, delayed
+        # process in the same fashion as lists
+        results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
+            delayed(unwrap_and_quilt_seamless)(
+                wrapped_func,
+                src[min(i, src.shape[0] - 1)],
+                lookup[min(i, lookup.shape[0] - 1)]
+                if lookup is not None else None,
+                i) for i in range(max(src.shape[0], lookup.shape[0])))
+        return torch.stack(results)
+
+
+class ImageMakeSeamlessSB:
+    """Transition stripe is built via a single rectangular block."""
+
+    @dataclass
+    class SeamlessFuncWrapper:
+        """Wraps node functionality for easy re-use when using jobs."""
+
+        ori: str
+        block_size: int
+        overlap: int
+        rng: numpy.random.Generator
+        version: int
+        jobs_shm_name: str
+
+        def __call__(self, image, lookup, job_id):
+            from .make_seamless2 import seamless_horizontal, seamless_vertical, seamless_both
+
+            if self.version == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
+                if lookup is not None:
+                    lookup = cv2.cvtColor(lookup, cv2.COLOR_RGB2Lab) if lookup is not None else None
+
+            match self.ori:
+                case "H":
+                    func = seamless_horizontal
+                case "V":
+                    func = seamless_vertical
+                case ___:
+                    func = seamless_both
+
+            result = func(image, self.block_size, self.overlap,
+                          self.version, lookup, self.rng, UiCoordData(self.jobs_shm_name, job_id))
+
+            if self.version == 2:
+                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
+
+            return result
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        inputs = QUILTING_SHARED_INPUT_TYPES.copy()
+        inputs.pop("parallelization_lvl")
+        inputs.pop("tolerance")
+        inputs["version"][1]["min"] = 1
+        return {
+            "required": {
+                "src": ("IMAGE",),
+                "ori": (SEAMLESS_DIRS, {"default": SEAMLESS_DIRS[0]}),
+                **inputs,
+            },
+            "optional": {
+                "lookup": ("IMAGE",),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "compute"
+    CATEGORY = NODES_CATEGORY
+
+    def compute(self, src, ori, block_size, overlap, seed, version, lookup=None):
+        # note that src = lookup is the current algorithm policy when lookup is not provided.
+        # this policy could change in the future, so do not apply it here too despite being idempotent.
+        overlap = overlap_percentage_to_pixels(block_size, overlap)
+        rng: numpy.random.Generator = np.random.default_rng(seed=seed)
+
+        lookup_batch_size = lookup.shape[0] if lookup is not None else 0
+        finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))
+
+        func = ImageMakeSeamlessSB.SeamlessFuncWrapper(
+            ori, block_size, overlap, rng, version, shm_name)
 
         if src.shape[0] > 1 or lookup is not None and lookup.shape[0] > 1:  # if image batch
             texture_batch = self.batch_using_jobs(func, src, lookup)
