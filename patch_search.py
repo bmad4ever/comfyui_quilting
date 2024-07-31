@@ -1,6 +1,6 @@
+from .jena2020.generate import findPatchVertical, findPatchHorizontal, findPatchBoth
 import numpy as np
 import cv2 as cv
-from .jena2020.generate import findPatchVertical, findPatchHorizontal, findPatchBoth
 
 epsilon = np.finfo(float).eps
 
@@ -69,6 +69,15 @@ def get_find_patch_both_method(version: int):
                 return find_patch_v3(left_block, None, top_block, None, image, block_size, overlap, tolerance, rng)
 
             return v3_both
+
+
+def get_generic_find_patch_method(version: int):
+    match version:
+        case 1: return find_patch_v1
+        case 2: return find_patch_v2
+        case 3: return find_patch_v3
+        case _: raise NotImplemented()
+
 
 # endregion
 

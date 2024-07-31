@@ -1,15 +1,12 @@
-from dataclasses import dataclass
-
-from .make_seamless import (make_seamless_horizontally, make_seamless_vertically,
-                            make_seamless_both, get_numb_of_blocks_to_fill_stripe)
 from .quilting import generate_texture, generate_texture_parallel
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing import Event
+from dataclasses import dataclass
 from .types import UiCoordData
 from threading import Thread
 from comfy import utils
-import numpy as np
 import numpy.random
+import numpy as np
 import torch
 import cv2
 
@@ -45,6 +42,21 @@ QUILTING_SHARED_INPUT_TYPES = {
 }
 
 
+@dataclass
+class QuiltingFuncWrapper:
+    """Wraps node functionality for easy re-use when using jobs."""
+    block_size: int
+    overlap: int
+    out_h: int
+    out_w: int
+    tolerance: float
+    parallelization_lvl: int
+    rng: numpy.random.Generator
+    version: int
+    jobs_shm_name: str
+
+
+# region AUX FUNCTIONS
 def waiting_loop(abort_loop_event: Event, pbar: utils.ProgressBar, total_steps, shm_name, ntasks=1):
     """
         Listens for interrupts and propagates to Problem running using interruption_proxy.
@@ -91,6 +103,7 @@ def setup_pbar_quilting(block_size, overlap, out_height, out_width, par_lvl, bat
 
 
 def setup_pbar_seamless(ori, block_size, overlap, height, width, batch_len):
+    from .make_seamless import get_numb_of_blocks_to_fill_stripe
     match ori:
         case "H":
             total_steps = get_numb_of_blocks_to_fill_stripe(block_size, overlap, width)
@@ -125,36 +138,40 @@ def setup_pbar(total_steps, par_lvl, batch_len):
     return finished_event, t, shm_jobs.name, shm_jobs
 
 
-def unwrap_and_quilt(wrapped_func, image, job_id):
+def unwrap_and_quilt(wrapped_func, image, job_id, is_latent: bool = False):
     """quilting job when using batches"""
+    squeeze = len(image.shape) > 3
     image = image.cpu().numpy()
+    image = image.squeeze() if squeeze else image
+    image = np.moveaxis(image, 0, -1) if is_latent else image
     result = wrapped_func(image, job_id)
-    return torch.from_numpy(result)
+    result = np.moveaxis(result, -1, 0) if is_latent else result
+    result = torch.from_numpy(result)
+    result = result.unsqueeze(0) if squeeze else result
+    return result
 
 
 def unwrap_and_quilt_seamless(wrapped_func, image, lookup, job_id):
     """seamless quilting job when using batches"""
     image = image.cpu().numpy()
+    squeeze = len(image.shape) > 3
+    image = image.squeeze() if squeeze else image
     if lookup is not None:
         lookup = lookup.cpu().numpy()
+        lookup = lookup.squeeze() if len(lookup.shape) > 3 else lookup
     result = wrapped_func(image, lookup, job_id)
-    return torch.from_numpy(result)
+    result = torch.from_numpy(result)
+    result = result.unsqueeze(0) if squeeze else result
+    return result
 
+# endregion AUX FUNCTIONS & CLASSES
+
+
+# region NODES
 
 class ImageQuilting:
-    @dataclass
-    class ImageQuiltingFuncWrapper:
+    class ImageQuiltingFuncWrapper(QuiltingFuncWrapper):
         """Wraps node functionality for easy re-use when using jobs."""
-
-        block_size: int
-        overlap: int
-        out_h: int
-        out_w: int
-        tolerance: float
-        parallelization_lvl: int
-        rng: numpy.random.Generator
-        version: int
-        jobs_shm_name: str
 
         def __call__(self, image, job_id):
             if self.version == 2:
@@ -215,9 +232,7 @@ class ImageQuilting:
             return (texture_batch,)
 
         # ____ if single image
-        src = src.cpu().numpy().squeeze()
-        texture = func(src, 0)
-        texture = torch.from_numpy(texture).unsqueeze(0)
+        texture = unwrap_and_quilt(func, src, 0)
         terminate_generation(finish_event, shm_jobs, t)
         return (texture,)
 
@@ -230,6 +245,19 @@ class ImageQuilting:
 
 
 class LatentQuilting:
+    class LatentQuiltingFuncWrapper(QuiltingFuncWrapper):
+        """Wraps node functionality for easy re-use when using jobs."""
+
+        def __call__(self, latent_image, job_id):
+            if self.parallelization_lvl == 0:
+                return generate_texture(
+                    latent_image, self.block_size, self.overlap, self.out_h, self.out_w, self.tolerance,
+                    self.version, self.rng, UiCoordData(self.jobs_shm_name, job_id))
+            else:
+                return generate_texture_parallel(
+                    latent_image, self.block_size, self.overlap, self.out_h, self.out_w, self.tolerance,
+                    self.version, self.parallelization_lvl, self.rng, UiCoordData(self.jobs_shm_name, job_id))
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -259,52 +287,24 @@ class LatentQuilting:
         finish_event, t, shm_name, shm_jobs = \
             setup_pbar_quilting(block_size, overlap, out_h, out_w, parallelization_lvl, src.shape[0])
 
+        func = LatentQuilting.LatentQuiltingFuncWrapper(
+            block_size, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
+
         if src.shape[0] > 1:  # if multiple
-            latent_batch = self.batch_using_jobs(src, block_size, overlap, out_h, out_w, tolerance, version,
-                                                 parallelization_lvl, rng, shm_name)
+            latent_batch = self.batch_using_jobs(func, src)
             terminate_generation(finish_event, shm_jobs, t)
             return ({"samples": latent_batch},)
 
         # ____ if single
-        src = src[0].cpu().numpy().squeeze()
-        src = np.moveaxis(src, 0, -1)
-
-        if parallelization_lvl == 0:
-            texture = generate_texture(
-                src, block_size, overlap, out_h, out_w, tolerance, version, rng,
-                UiCoordData(shm_name, 0))
-        else:
-            texture = generate_texture_parallel(
-                src, block_size, overlap, out_h, out_w, tolerance, version, parallelization_lvl, rng,
-                UiCoordData(shm_name, 0))
-
+        texture = unwrap_and_quilt(func, src, 0, is_latent=True)
         terminate_generation(finish_event, shm_jobs, t)
-        texture = np.moveaxis(texture, -1, 0)
-        texture = torch.from_numpy(texture).unsqueeze(0)
         return ({"samples": texture},)
 
     @staticmethod
-    def batch_using_jobs(src, block_size, overlap, outH, outW, tolerance, version, parallelization_lvl, rng,
-                         jobs_shm_name):
+    def batch_using_jobs(wrapped_func, src):
         from joblib import Parallel, delayed
-
-        def unwrap_and_quilt(latent, job_id):
-            latent = latent.cpu().numpy().squeeze()
-            latent = np.moveaxis(latent, 0, -1)
-            if parallelization_lvl == 0:
-                result = generate_texture(
-                    latent, block_size, overlap, outH, outW, tolerance, version, rng,
-                    UiCoordData(jobs_shm_name, job_id))
-            else:
-                result = generate_texture_parallel(
-                    latent, block_size, overlap, outH, outW, tolerance, version, 1, rng,
-                    UiCoordData(jobs_shm_name, job_id))
-            result = np.moveaxis(result, -1, 0)
-            return torch.from_numpy(result)
-
         results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
-            delayed(unwrap_and_quilt)(src[i], i) for i in range(src.shape[0]))
-
+            delayed(unwrap_and_quilt)(wrapped_func, src[i], i, True) for i in range(src.shape[0]))
         return torch.stack(results)
 
 
@@ -376,19 +376,16 @@ class ImageMakeSeamlessMB:
 
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless(ori, block_size, overlap, h, w, 0)
 
-        seamless_func = ImageMakeSeamlessMB.SeamlessFuncWrapper(
+        func = ImageMakeSeamlessMB.SeamlessFuncWrapper(
             ori, block_size, overlap, tolerance, rng, version, shm_name)
 
         if src.shape[0] > 1 or lookup is not None and lookup.shape[0] > 1:  # if image batch
-            texture_batch = self.batch_using_jobs(seamless_func, src, lookup)
+            texture_batch = self.batch_using_jobs(func, src, lookup)
             terminate_generation(finish_event, shm_jobs, t)
             return (texture_batch,)
 
         # ____ if single image
-        src = src.cpu().numpy().squeeze()
-        lookup = lookup.cpu().numpy().squeeze() if lookup is not None else None
-        output = seamless_func(src, lookup, 0)
-        output = torch.from_numpy(output).unsqueeze(0)
+        output = unwrap_and_quilt_seamless(func, src, lookup, 0)
         terminate_generation(finish_event, shm_jobs, t)
         return (output,)
 
@@ -405,3 +402,4 @@ class ImageMakeSeamlessMB:
                 i) for i in range(max(src.shape[0], lookup.shape[0])))
         return torch.stack(results)
 
+# endregion NODES
