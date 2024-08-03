@@ -1,96 +1,110 @@
-import cv2
-from itertools import product
-
+from math import ceil
 import numpy as np
 
+from custom_nodes.comfyui_quilting.misc.bse_desc_util import analyze_keypoint_scales
+from custom_nodes.comfyui_quilting.misc.bse_ft_util import analyze_freq_spectrum
 
-def median_cor_coeff_spp(block_size, image):
-    h, w = image.shape[:2]
-    y, x = h // 2 - block_size//2, w // 2 - block_size//2
-    img_patch = img[y:y+block_size, x:x+block_size]
 
-    result = cv2.matchTemplate(image, img_patch, cv2.TM_CCOEFF_NORMED)
-    return np.median(result)
+def find_sync_freq(div_weight_pairs, lower, upper):
+    min_distance_sum = float('inf')
+    best_number = lower
+
+    for num in range(lower, upper + 1):
+        distance_sum = 0
+        for d, w in div_weight_pairs:
+            if num < d:
+                distance = d - num
+            else:
+                remainder = num % d
+                distance = min(remainder, d - remainder)
+
+            distance_sum += distance * w
+
+        if distance_sum < min_distance_sum or (abs(distance_sum - min_distance_sum) < .5 and num > best_number):
+            min_distance_sum = distance_sum
+            best_number = num
+
+    return best_number
+
+
+def make_guess(dist_weight_pairs, lookup_dims):
+    min_dim = min(lookup_dims)
+    default_value = round(min_dim / 2.5)  # returned in edge cases
+
+    if len(dist_weight_pairs) == 0:  # an edge case; maybe a blank image is sent...
+        return default_value
+
+    block_size_lower_bound = dist_weight_pairs[0][0]
+    block_size_upper_bound = round(min_dim / 1.2)
+    print(f"initial upper bound = {block_size_upper_bound}")
+
+    # the lookup should have at least one single freq sized block of addressable space
+    # if this is not the case, analysing a multiple for this freq is irrelevant
+    dist_weight_pairs.sort()
+    print(dist_weight_pairs)
+    while dist_weight_pairs[-1][0] > min_dim - dist_weight_pairs[-1][0]:
+        freq, _ = dist_weight_pairs.pop()
+        block_size_upper_bound = min(block_size_upper_bound,
+                                     min_dim - freq)  # this might be too strong of a restriction
+        if len(dist_weight_pairs) == 0:  # edge case
+            return default_value
+
+    print(f"rectified upper bound = {block_size_upper_bound}")
+    return find_sync_freq(dist_weight_pairs, block_size_lower_bound, block_size_upper_bound)
+
+
+def filter_pairs_by_weight(div_weight_pairs, weight_percentage_threshold):
+    total_weight = sum(weight for _, weight in div_weight_pairs)
+    threshold = total_weight * (weight_percentage_threshold / 100)
+    filtered_pairs = [(divisor, weight) for divisor, weight in div_weight_pairs if weight >= threshold]
+    return filtered_pairs
+
+
+def guess_nice_block_size(src: np.ndarray) -> int:
+    def normalize_weights(dist_weight_pairs):
+        if not dist_weight_pairs:
+            return []
+        weights = [weight for index, weight in dist_weight_pairs]
+        total_weight = sum(weights)
+        if total_weight > 0:
+            normalized_pairs = [(index, weight / total_weight) for index, weight in dist_weight_pairs]
+        else:
+            normalized_pairs = [(index, 0) for index, weight in dist_weight_pairs]
+        return normalized_pairs
+
+    freq_analysis_pairs = analyze_freq_spectrum(src)
+    desc_analysis_pairs = analyze_keypoint_scales(src)
+    # all should come already sorted in descending order w/ respect to weight
+
+    print(freq_analysis_pairs)
+    print(desc_analysis_pairs)
+
+    # filter very small distances, with respect to the src size
+    thresh_distance = ceil(min(image.shape[:2]) ** (1 / 4))
+    freq_analysis_pairs = [(dst, w) for dst, w in freq_analysis_pairs if dst >= thresh_distance]
+    desc_analysis_pairs = [(dst, w) for dst, w in desc_analysis_pairs if dst >= thresh_distance]
+
+    # filter distances whose weight is comparatively low
+    freq_analysis_pairs = filter_pairs_by_weight(freq_analysis_pairs[:5], 20)
+    desc_analysis_pairs = filter_pairs_by_weight(desc_analysis_pairs[:5], 20)
+
+    final_pairs = [
+        *normalize_weights(freq_analysis_pairs),
+        *normalize_weights(desc_analysis_pairs)
+    ]  # may contain duplicates or multiples, that is expected
+
+    print(f"final pairs: {final_pairs}")
+    return make_guess(final_pairs, src.shape[:2])
 
 
 if __name__ == "__main__":
-    img = cv2.imread("./t166.png", cv2.IMREAD_COLOR)
+    from cv2 import imread, IMREAD_GRAYSCALE
 
-   #print(cv2.matchTemplate(img, img[:-2, :-2], cv2.TM_CCORR_NORMED))
-   #a = np.ones_like(img)*255
-   #print(cv2.matchTemplate(a, a[:-2, :-2], cv2.TM_CCOEFF))
-   #quit()
-
-    interval = min(img.shape[:2]) // 2
-    lb, ub = 3, round(min(img.shape[:2])/2.5)
-    g_best_bs = 0
-    g_best_v  = -float("inf")
-    g_worst_bs = 0
-    g_worst_v  = +float("inf")
-
-    # SEARCH BEST
-    while interval != 1:
-        interval = interval // 8
-        if interval == 0:
-            interval = 1
-        print(f"interval : {interval}")
-
-        best_v = -float("inf")
-        best_bs = g_best_bs
-
-        for block_size in range(ub, lb, -interval):
-            if block_size == g_best_bs:
-                continue
-
-            print(f"searching... bs: {block_size}")
-            med_cc_sums = median_cor_coeff_spp(block_size, img)
-            if med_cc_sums > best_v:
-                best_v = med_cc_sums
-                best_bs = block_size
-
-        if best_v > g_best_v:
-            g_best_v = best_v
-            g_best_bs = best_bs
-
-        lb = max(lb, g_best_bs - interval)
-        ub = min(ub, g_best_bs + interval)
-        print(f"best :  {(best_bs, best_v)}")
-
-
-    # search WORST
-    print("______________________________")
-    interval = min(img.shape[:2]) // 2
-    lb, ub = 3, round(min(img.shape[:2]) / 2.5)
-    while interval != 1:
-        interval = interval // 8
-        if interval == 0:
-            interval = 1
-        print(f"interval : {interval}")
-
-        worst_v = float("inf")
-        worst_bs= 0
-
-        for block_size in range(ub, lb, -interval):
-            if block_size == g_worst_bs:
-                continue
-
-            print(f"searching... bs: {block_size}")
-            med_cc_sums = median_cor_coeff_spp(block_size, img)
-            if med_cc_sums < worst_v:
-                worst_v = med_cc_sums
-                worst_bs= block_size
-
-        if worst_v < g_worst_v:
-            g_worst_v = worst_v
-            g_worst_bs = worst_bs
-
-        lb = max(lb, g_worst_bs - interval)
-        ub = min(ub, g_worst_bs + interval)
-
-    print(f"best :  {(g_best_bs, g_best_v)} ")
-    print(f"worst:  {(g_worst_bs, g_worst_v)} ")
-    #print(f"mcc:  {median_cor_coeff_spp(33, img)} ")
-
-
-
-
+    image_path = "t9.png"
+    image = imread(image_path, IMREAD_GRAYSCALE)
+    block_size = guess_nice_block_size(image)
+    print(f"guessed block_size = {block_size}")
+    # for t9 -> 60 . that is 4 holes (2 and half in the same line) distance & block is not too small
+    # for t16 -> 55. doesn't look bad & not too small
+    # for t18 -> 96. about 2x2 apples & not too small
+    # at a 1st glance seems okay...
