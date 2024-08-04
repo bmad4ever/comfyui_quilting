@@ -31,9 +31,9 @@ def compute_wavelens_of_interest(spectrum, max_to_fetch: int = 16):
         magnitude = round(flat_spectrum[flat_index])
 
         # calculate the frequency as the maximum absolute distance from the center
-        freq_y = abs(y - h / 2) / h  # div by h, but that is taken into account in wavelen
+        freq_y = abs(y - h / 2) / h  
         freq_x = abs(x - w / 2) / w
-        #  compute wavelen
+        # compute wavelen
         wavelen_y = 1 / freq_y if freq_y > 0 else 0  # don't return infinity when selecting max
         wavelen_x = 1 / freq_x if freq_x > 0 else 0
         wavelen = int(max(wavelen_y, wavelen_x))
