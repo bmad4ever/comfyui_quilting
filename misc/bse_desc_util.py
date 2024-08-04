@@ -12,6 +12,9 @@ label: TypeAlias = int
 
 
 def find_optimal_clusters(data: list, max_k: int = 6) -> tuple[list[label], list[...], int, float]:
+    if len(np.unique(data)) == 1:  # edge case
+        return [0] * len(data), [data[0]], 1, 0
+
     iters = range(2, max_k + 1)
     best_k = 2
     best_score = -1.0
@@ -81,6 +84,8 @@ def inner_square_area(circle_diameter: float) -> float:
 def analyze_keypoint_scales(image: np.ndarray) -> size_weight_pairs:
     sift = cv2.SIFT_create()
     keypoints = sift.detect(image, None)
+    if len(keypoints) == 0:  # edge case
+        return []
     kp_sizes = [kp.size for kp in keypoints]  # keypoints' diameters, in pixels
     kp_pts = [kp.pt for kp in keypoints]  # keypoints' (y, x) positions
 
@@ -104,7 +109,7 @@ def analyze_keypoint_scales(image: np.ndarray) -> size_weight_pairs:
 
 
 if __name__ == "__main__":
-    image_path = '../t18.png'
+    image_path = '../t9.png'
     image = cv2.imread(image_path)
     data = analyze_keypoint_scales(image)
     print(data)
