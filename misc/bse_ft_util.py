@@ -10,58 +10,54 @@ def compute_fft(image):
     return magnitude_spectrum
 
 
-def compute_freqs_of_interest(spectrum, max_to_fetch: int = 16):
+def compute_wavelens_of_interest(spectrum, max_to_fetch: int = 16):
     h, w = spectrum.shape[:2]
-    unique_frequencies = set()
-    freq_magnitude_pairs = {}
+    unique_wavelen = set()
+    wavelen_magnitude_pairs = {}
 
-    from math import ceil
-    freq_thresh = ceil(min(spectrum.shape[:2])**(1/4))
-    print(freq_thresh)
-
-    # Flatten the spectrum and get the indices of the sorted magnitudes
-    flat_indices = np.argsort(spectrum, axis=None)[::-1]  # Sort in descending order
+    # flatten the spectrum and get the indices of the sorted magnitudes
+    flat_indices = np.argsort(spectrum, axis=None)[::-1]  # sort in descending order
     flat_spectrum = spectrum.flatten()
 
     unique_count = 0
 
-    # Skip the first maximum magnitude
-    start_index = 1
-
+    start_index = 1  # skip the first maximum magnitude
     for flat_index in flat_indices[start_index:]:
         if unique_count >= max_to_fetch:
             break
 
-        # Convert flat index to 2D indices
+        # convert flat index to 2D indices
         y, x = np.unravel_index(flat_index, spectrum.shape)
         magnitude = round(flat_spectrum[flat_index])
 
-        # Calculate the frequency as the maximum absolute distance from the center
-        freq_y = abs(y - h / 2)
-        freq_x = abs(x - w / 2)
-        freq = int(max(freq_y, freq_x))
-        if freq < freq_thresh:
-            continue
+        # calculate the frequency as the maximum absolute distance from the center
+        freq_y = abs(y - h / 2) / h  # div by h, but that is taken into account in wavelen
+        freq_x = abs(x - w / 2) / w
+        #  compute wavelen
+        wavelen_y = 1 / freq_y if freq_y > 0 else 0  # don't return infinity when selecting max
+        wavelen_x = 1 / freq_x if freq_x > 0 else 0
+        wavelen = int(max(wavelen_y, wavelen_x))
 
-        if freq not in unique_frequencies:
-            unique_frequencies.add(freq)
-            freq_magnitude_pairs[freq] = magnitude
+        if wavelen not in unique_wavelen:
+            unique_wavelen.add(wavelen)
+            wavelen_magnitude_pairs[wavelen] = magnitude
             unique_count += 1
         else:
-            if magnitude > freq_magnitude_pairs[freq]:
-                freq_magnitude_pairs[freq] = magnitude
+            if magnitude > wavelen_magnitude_pairs[wavelen]:
+                wavelen_magnitude_pairs[wavelen] = magnitude
 
-    return list(freq_magnitude_pairs.items())
+    return list(wavelen_magnitude_pairs.items())
 
 
 def analyze_freq_spectrum(image, max_components=16):
     magnitude_spectrum = compute_fft(image)
-    af = compute_freqs_of_interest(magnitude_spectrum, max_components)
-    return af
+    wlen_mag_pairs = compute_wavelens_of_interest(magnitude_spectrum, max_components)
+    print(f"sorted wavelens = {wlen_mag_pairs}")
+    return wlen_mag_pairs
 
 
 if __name__ == "__main__":
-    image_path = "../t9.png"
+    image_path = "../t16.png"
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     data = analyze_freq_spectrum(image, max_components=10)
     print(data)

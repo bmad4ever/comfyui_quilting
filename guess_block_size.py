@@ -5,7 +5,7 @@ from custom_nodes.comfyui_quilting.misc.bse_desc_util import analyze_keypoint_sc
 from custom_nodes.comfyui_quilting.misc.bse_ft_util import analyze_freq_spectrum
 
 
-def find_sync_freq(div_weight_pairs, lower, upper):
+def find_sync_wavelen(div_weight_pairs, lower, upper):
     min_distance_sum = float('inf')
     best_number = lower
 
@@ -50,7 +50,7 @@ def make_guess(dist_weight_pairs, lookup_dims):
             return default_value
 
     print(f"rectified upper bound = {block_size_upper_bound}")
-    return find_sync_freq(dist_weight_pairs, block_size_lower_bound, block_size_upper_bound)
+    return find_sync_wavelen(dist_weight_pairs, block_size_lower_bound, block_size_upper_bound)
 
 
 def filter_pairs_by_weight(div_weight_pairs, weight_percentage_threshold):
@@ -80,9 +80,11 @@ def guess_nice_block_size(src: np.ndarray) -> int:
     print(desc_analysis_pairs)
 
     # filter very small distances, with respect to the src size
-    thresh_distance = ceil(min(image.shape[:2]) ** (1 / 4))
-    freq_analysis_pairs = [(dst, w) for dst, w in freq_analysis_pairs if dst >= thresh_distance]
-    desc_analysis_pairs = [(dst, w) for dst, w in desc_analysis_pairs if dst >= thresh_distance]
+    min_dim = min(image.shape[:2])
+    thresh_distance = ceil(min_dim ** (1 / 4))
+    block_size_upper_bound = round(min_dim / 1.2)
+    freq_analysis_pairs = [(dst, w) for dst, w in freq_analysis_pairs if thresh_distance <= dst < block_size_upper_bound]
+    desc_analysis_pairs = [(dst, w) for dst, w in desc_analysis_pairs if thresh_distance <= dst < block_size_upper_bound]
 
     # filter distances whose weight is comparatively low
     freq_analysis_pairs = filter_pairs_by_weight(freq_analysis_pairs[:5], 20)
@@ -100,11 +102,12 @@ def guess_nice_block_size(src: np.ndarray) -> int:
 if __name__ == "__main__":
     from cv2 import imread, IMREAD_GRAYSCALE
 
-    image_path = "t9.png"
+    image_path = "t18.png"
     image = imread(image_path, IMREAD_GRAYSCALE)
     block_size = guess_nice_block_size(image)
     print(f"guessed block_size = {block_size}")
-    # for t9 -> 60 . that is 4 holes (2 and half in the same line) distance & block is not too small
-    # for t16 -> 55. doesn't look bad & not too small
-    # for t18 -> 96. about 2x2 apples & not too small
-    # at a 1st glance seems okay...
+    # new values
+    # t9  -> 64
+    # t16 -> 55 ( the same as prev. )
+    # t18 -> 82
+    # seem acceptable at a glance
