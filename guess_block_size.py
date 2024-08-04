@@ -59,7 +59,7 @@ def filter_pairs_by_weight(pairs: size_weight_pairs, weight_percentage_threshold
     return filtered_pairs
 
 
-def guess_nice_block_size(src: np.ndarray) -> int:
+def guess_nice_block_size(src: np.ndarray) -> num_pixels:
     def normalize_weights(pairs: size_weight_pairs):
         if not pairs:
             return []

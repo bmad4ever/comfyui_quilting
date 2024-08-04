@@ -1,4 +1,5 @@
 from .quilting import generate_texture, generate_texture_parallel
+from .guess_block_size import guess_nice_block_size
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing import Event
 from dataclasses import dataclass
@@ -370,6 +371,7 @@ class ImageMakeSeamlessMB:
         inputs = QUILTING_SHARED_INPUT_TYPES.copy()
         inputs.pop("parallelization_lvl")
         inputs["version"][1]["min"] = 1
+        inputs["overlap"][1]["max"] = .5
         return {
             "required": {
                 "src": ("IMAGE",),
@@ -467,6 +469,7 @@ class ImageMakeSeamlessSB:
         inputs.pop("parallelization_lvl")
         inputs.pop("tolerance")
         inputs["version"][1]["min"] = 1
+        inputs["overlap"][1]["max"] = .5
         return {
             "required": {
                 "src": ("IMAGE",),
