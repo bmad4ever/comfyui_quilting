@@ -1,3 +1,4 @@
+from custom_nodes.comfyui_quilting.misc.bse_type_aliases import num_pixels, size_weight_pairs
 from sklearn.metrics import silhouette_score
 from sklearn.metrics import pairwise_distances
 from sklearn.cluster import KMeans
@@ -6,11 +7,11 @@ from typing import TypeAlias
 import numpy as np
 import cv2
 
-num_pixels: TypeAlias = int
-weight: TypeAlias = float
+area: TypeAlias = int
+label: TypeAlias = int
 
 
-def find_optimal_clusters(data: list, max_k: int = 6) -> tuple[list[int], list[...], int, float]:
+def find_optimal_clusters(data: list, max_k: int = 6) -> tuple[list[label], list[...], int, float]:
     iters = range(2, max_k + 1)
     best_k = 2
     best_score = -1.0
@@ -34,8 +35,13 @@ def find_optimal_clusters(data: list, max_k: int = 6) -> tuple[list[int], list[.
     return best_labels, best_centers.reshape(-1), best_k, best_score
 
 
-def min_distance_same_label(positions: list[tuple[int, int]], labels: list[int]) -> \
-        tuple[dict[num_pixels, int], dict[num_pixels, int]]:
+def min_distance_same_label(positions: list[tuple[int, int]], labels: list[label]) -> \
+        tuple[dict[label, num_pixels], dict[label, area]]:
+    """
+    @return: two dictionaries where the keys are the unique labels:
+        the 1st contains the minimum distances found for each label;
+        the 2nd contains the area between the points from which the minimum distance was obtained.
+    """
     positions = np.array(positions)
     labels = np.array(labels)
 
@@ -49,10 +55,10 @@ def min_distance_same_label(positions: list[tuple[int, int]], labels: list[int])
     def area(u, v):
         return abs(u[0] - v[0]) * abs(u[1] - v[1])
 
-    for label in unique_labels:
-        label_indices = np.nonzero(labels == label)[0]
+    for _label in unique_labels:
+        label_indices = np.nonzero(labels == _label)[0]
         if len(label_indices) < 2:
-            min_distances[label] = None  # not enough points to compute distance
+            min_distances[_label] = None  # not enough points to compute distance
             continue
 
         label_descriptors = positions[label_indices]  # same label descriptors
@@ -62,21 +68,21 @@ def min_distance_same_label(positions: list[tuple[int, int]], labels: list[int])
 
         # find the minimum distance & its area
         min_distance = np.min(distances)
-        min_distances[label] = min_distance
-        min_dist_areas[label] = np.median(areas[distances == min_distance])
+        min_distances[_label] = min_distance
+        min_dist_areas[_label] = np.median(areas[distances == min_distance])
 
     return min_distances, min_dist_areas
 
 
 def inner_square_area(circle_diameter: float) -> float:
-    return 2*(circle_diameter/2)**2
+    return 2 * (circle_diameter / 2) ** 2
 
 
-def analyze_keypoint_scales(image: np.ndarray) -> list[tuple[num_pixels, weight]]:
+def analyze_keypoint_scales(image: np.ndarray) -> size_weight_pairs:
     sift = cv2.SIFT_create()
     keypoints = sift.detect(image, None)
     kp_sizes = [kp.size for kp in keypoints]  # keypoints' diameters, in pixels
-    kp_pts = [kp.pt for kp in keypoints]      # keypoints' (y, x) positions
+    kp_pts = [kp.pt for kp in keypoints]  # keypoints' (y, x) positions
 
     # cluster keypoints by size.
     # then, consider their size & distance in the analysis, and weight them w/ respect to area covered
@@ -84,13 +90,13 @@ def analyze_keypoint_scales(image: np.ndarray) -> list[tuple[num_pixels, weight]
 
     # weight clusters with respect to the area coverage on the image
     label_counts = Counter(labels)  # the number of keypoints' of a given label. should be sorted
-    labels_coverage = [inner_square_area(diam)*label_counts[i] for i, diam in enumerate(kp_pt_cluster_centers)]
+    labels_coverage = [inner_square_area(diam) * label_counts[i] for i, diam in enumerate(kp_pt_cluster_centers)]
     dist_weight_pairs = [(round(kp_pt_cluster_centers[i]), w) for i, w in enumerate(labels_coverage)]
 
     # get the minimum distance between keypoints belonging to the same cluster
     # suppose that each keypoints has at least one area adjacent, so that the min. area is given by min_area * num_kps
     distance_pairs, pairs_areas = min_distance_same_label(kp_pts, labels)
-    dist_weight_pairs.extend([(round(distance_pairs[i]), pairs_areas[i]*label_counts[i])
+    dist_weight_pairs.extend([(round(distance_pairs[i]), pairs_areas[i] * label_counts[i])
                               for i, _ in enumerate(labels_coverage)])
     dist_weight_pairs.sort(key=lambda i: i[1], reverse=True)
     print(f"sorted descs = {dist_weight_pairs}")

@@ -1,3 +1,4 @@
+from custom_nodes.comfyui_quilting.misc.bse_type_aliases import size_weight_pairs
 import numpy as np
 import cv2
 
@@ -10,7 +11,7 @@ def compute_fft(image):
     return magnitude_spectrum
 
 
-def compute_wavelens_of_interest(spectrum, max_to_fetch: int = 16):
+def compute_wavelens_of_interest(spectrum: np.ndarray, max_to_fetch: int = 16) -> size_weight_pairs:
     h, w = spectrum.shape[:2]
     unique_wavelen = set()
     wavelen_magnitude_pairs = {}
@@ -31,7 +32,7 @@ def compute_wavelens_of_interest(spectrum, max_to_fetch: int = 16):
         magnitude = round(flat_spectrum[flat_index])
 
         # calculate the frequency as the maximum absolute distance from the center
-        freq_y = abs(y - h / 2) / h  
+        freq_y = abs(y - h / 2) / h
         freq_x = abs(x - w / 2) / w
         # compute wavelen
         wavelen_y = 1 / freq_y if freq_y > 0 else 0  # don't return infinity when selecting max
@@ -49,9 +50,9 @@ def compute_wavelens_of_interest(spectrum, max_to_fetch: int = 16):
     return list(wavelen_magnitude_pairs.items())
 
 
-def analyze_freq_spectrum(image, max_components=16):
+def analyze_freq_spectrum(image: np.ndarray, max_items: int = 16) -> size_weight_pairs:
     magnitude_spectrum = compute_fft(image)
-    wlen_mag_pairs = compute_wavelens_of_interest(magnitude_spectrum, max_components)
+    wlen_mag_pairs = compute_wavelens_of_interest(magnitude_spectrum, max_items)
     print(f"sorted wavelens = {wlen_mag_pairs}")
     return wlen_mag_pairs
 
@@ -59,5 +60,5 @@ def analyze_freq_spectrum(image, max_components=16):
 if __name__ == "__main__":
     image_path = "../t16.png"
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    data = analyze_freq_spectrum(image, max_components=10)
+    data = analyze_freq_spectrum(image)
     print(data)
