@@ -186,8 +186,9 @@ def generate_texture_parallel(image, block_size, overlap, outH, outW, tolerance,
 def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, version, p_strips, rng,
           uicd: UiCoordData | None):
     """
-    :param his: horizontal inverted stripe
-    :param vis: vertical inverted stripe
+    @param his: horizontal inverted stripe
+    @param vis: vertical inverted stripe
+    @param p_strips: number of sub processes to build the quadrant (only when para_lvl higher than 1)
     """
     shm_text = None
     vi_hi_s = np.ascontiguousarray(np.flipud(his))  # vertical inversion of the horizontal inverted stripe
@@ -204,7 +205,7 @@ def quad1(vis, his, hi_image, rows: int, columns: int, overlap, tolerance, versi
     texture[:vi_hi_s.shape[0], :vi_hi_s.shape[1]] = vi_hi_s[:, :]
     texture[vi_hi_s.shape[0]:hi_vi_s.shape[0], :hi_vi_s.shape[1]] = hi_vi_s[vi_hi_s.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, vi_hi_s.shape[0], overlap, shm_text.name, vhi_image, tolerance, version, p_strips,
+        fill_quad_ps(rows, columns, vi_hi_s.shape[0], overlap, version, shm_text.name, vhi_image, tolerance, p_strips,
                      rng, None if uicd is None else UiCoordData(uicd.jobs_shm_name, uicd.job_id + p_strips * 0))
     else:
         texture = fill_quad(rows, columns, vi_hi_s.shape[0], overlap, texture, vhi_image, tolerance, version, rng,
@@ -232,7 +233,7 @@ def quad2(vis, hs, vi_image, rows: int, columns: int, overlap, tolerance, versio
     texture[:hs.shape[0], :hs.shape[1]] = vi_hs[:, :]
     texture[hs.shape[0]:vis.shape[0], :vis.shape[1]] = vis[hs.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, hs.shape[0], overlap, shm_text.name, vi_image, tolerance, version, p_strips, rng,
+        fill_quad_ps(rows, columns, hs.shape[0], overlap, version, shm_text.name, vi_image, tolerance, p_strips, rng,
                      None if uicd is None else UiCoordData(uicd.jobs_shm_name, uicd.job_id + p_strips * 1))
     else:
         texture = fill_quad(rows, columns, hs.shape[0], overlap, texture, vi_image, tolerance, version, rng,
@@ -260,7 +261,7 @@ def quad4(vs, his, hi_image, rows: int, columns: int, overlap, tolerance, versio
     texture[:his.shape[0], :his.shape[1]] = his[:, :]
     texture[his.shape[0]:vs.shape[0], :vs.shape[1]] = hi_vs[his.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, his.shape[0], overlap, shm_text.name, hi_image, tolerance, version, p_strips, rng,
+        fill_quad_ps(rows, columns, his.shape[0], overlap, version, shm_text.name, hi_image, tolerance, p_strips, rng,
                      None if uicd is None else UiCoordData(uicd.jobs_shm_name, uicd.job_id + p_strips * 2))
     else:
         texture = fill_quad(rows, columns, his.shape[0], overlap, texture, hi_image, tolerance, version, rng,
@@ -287,7 +288,7 @@ def quad3(vs, hs, image, rows: int, columns: int, overlap, tolerance, version, p
     texture[:hs.shape[0], :hs.shape[1]] = hs[:, :]
     texture[hs.shape[0]:vs.shape[0], :vs.shape[1]] = vs[hs.shape[0]:, :]
     if p_strips > 1:
-        fill_quad_ps(rows, columns, vs.shape[1], overlap, shm_text.name, image, tolerance, version, p_strips, rng,
+        fill_quad_ps(rows, columns, vs.shape[1], overlap, version, shm_text.name, image, tolerance, p_strips, rng,
                      None if uicd is None else UiCoordData(uicd.jobs_shm_name, uicd.job_id + p_strips * 3))
     else:
         return fill_quad(rows, columns, vs.shape[1], overlap, texture, image, tolerance, version, rng,
@@ -300,8 +301,8 @@ def quad3(vs, hs, image, rows: int, columns: int, overlap, tolerance, version, p
     return texture
 
 
-def fill_quad_ps(rows, columns, block_size, overlap, version,
-                 texture_shared_mem_name, image, tolerance, total_procs, rng,
+def fill_quad_ps(rows, columns, block_size, overlap, version:int,
+                 texture_shared_mem_name: str, image, tolerance, total_procs, rng,
                  uicd: UiCoordData | None):
     from joblib import Parallel, delayed
 
@@ -318,7 +319,7 @@ def fill_quad_ps(rows, columns, block_size, overlap, version,
         np_coord[2 * ip] = 1 + ip
         np_coord[2 * ip + 1] = 1
 
-    def fill_rows(pid, coord_shared_list_name, texture_shm_name, uicd: UiCoordData | None):
+    def fill_rows(pid: int, coord_shared_list_name: str, texture_shm_name: str, uicd: UiCoordData | None):
         find_patch_both = get_find_patch_both_method(version)
 
         # get data in shared memory

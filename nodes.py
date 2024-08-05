@@ -314,8 +314,6 @@ class ImageQuilting:
 
             is_batch = src.shape[0] > 1
             output = self.batch_using_jobs(func, src) if is_batch else unwrap_and_quilt(func, src, 0)
-        except Exception as ex:
-            raise ex
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
@@ -384,8 +382,6 @@ class LatentQuilting:
             is_batch = src.shape[0] > 1
             output = self.batch_using_jobs(func, src) if is_batch else\
                 unwrap_and_quilt(func, src, 0, is_latent=True)
-        except Exception as ex:
-            raise ex
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return ({"samples": output},)
@@ -480,8 +476,6 @@ class ImageMakeSeamlessMB:
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
             output = self.batch_using_jobs(func, src, lookup) if is_batch else\
                 unwrap_and_quilt_seamless(func, src, lookup, 0)
-        except Exception as ex:
-            raise ex
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
@@ -582,8 +576,6 @@ class ImageMakeSeamlessSB:
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
             output = self.batch_using_jobs(func, src, lookup) if is_batch else\
                 unwrap_and_quilt_seamless(func, src, lookup, 0)
-        except Exception as ex:
-            raise ex
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
