@@ -86,7 +86,13 @@ def waiting_loop(abort_loop_event: Event, pbar: utils.ProgressBar, total_steps, 
         pbar.update_absolute(int(np.sum(procs_statuses[1:ntasks + 1])), total_steps)
 
 
-def terminate_generation(finished_event, jobs_shared_memory, pbt: Thread):
+def terminate_task(finished_event, jobs_shared_memory, pbt: Thread):
+    """
+    1. triggers finished_event so that UI thread can stop looping
+    2. check if the process stopped due to an interruption
+    3. closes/unlinks shared memory
+    4. if process stopped due to interruption executes throw_exception_if_processing_interrupted()
+    """
     coord_jobs_array = np.ndarray((1,), dtype=np.dtype('uint32'), buffer=jobs_shared_memory.buf)
     interrupted = coord_jobs_array[0]
     finished_event.set()
@@ -295,26 +301,24 @@ class ImageQuilting:
         h, w = src.shape[1:3]
         out_h, out_w = int(scale * h), int(scale * w)
         block_sizes = get_block_sizes(src, block_size)
+        rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
         # note: the input src should have normalized values, not 0 to 255
-
-        rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
         finish_event, t, shm_name, shm_jobs = \
             setup_pbar_quilting(block_sizes, overlap, out_h, out_w, parallelization_lvl)
 
-        func = ImageQuilting.ImageQuiltingFuncWrapper(
-            block_sizes, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
+        try:
+            func = ImageQuilting.ImageQuiltingFuncWrapper(
+                block_sizes, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
 
-        if src.shape[0] > 1:  # if image batch
-            texture_batch = self.batch_using_jobs(func, src)
-            terminate_generation(finish_event, shm_jobs, t)
-            return (texture_batch,)
-
-        # ____ if single image
-        texture = unwrap_and_quilt(func, src, 0)
-        terminate_generation(finish_event, shm_jobs, t)
-        return (texture,)
+            is_batch = src.shape[0] > 1
+            output = self.batch_using_jobs(func, src) if is_batch else unwrap_and_quilt(func, src, 0)
+        except Exception as ex:
+            raise ex
+        finally:
+            terminate_task(finish_event, shm_jobs, t)
+        return (output,)
 
     @staticmethod
     def batch_using_jobs(wrapped_func, src):
@@ -368,24 +372,23 @@ class LatentQuilting:
         h, w = src.shape[2:4]
         out_h, out_w = int(scale * h), int(scale * w)
         block_sizes = [block_size] * src.shape[0]
-
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
 
         finish_event, t, shm_name, shm_jobs = \
             setup_pbar_quilting(block_sizes, overlap, out_h, out_w, parallelization_lvl)
 
-        func = LatentQuilting.LatentQuiltingFuncWrapper(
-            block_sizes, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
+        try:
+            func = LatentQuilting.LatentQuiltingFuncWrapper(
+                block_sizes, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
 
-        if src.shape[0] > 1:  # if multiple
-            latent_batch = self.batch_using_jobs(func, src)
-            terminate_generation(finish_event, shm_jobs, t)
-            return ({"samples": latent_batch},)
-
-        # ____ if single
-        texture = unwrap_and_quilt(func, src, 0, is_latent=True)
-        terminate_generation(finish_event, shm_jobs, t)
-        return ({"samples": texture},)
+            is_batch = src.shape[0] > 1
+            output = self.batch_using_jobs(func, src) if is_batch else\
+                unwrap_and_quilt(func, src, 0, is_latent=True)
+        except Exception as ex:
+            raise ex
+        finally:
+            terminate_task(finish_event, shm_jobs, t)
+        return ({"samples": output},)
 
     @staticmethod
     def batch_using_jobs(wrapped_func, src):
@@ -470,17 +473,17 @@ class ImageMakeSeamlessMB:
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless(
             ori, block_sizes, overlap, h, w, max(src.shape[0], lookup_batch_size))
 
-        func = ImageMakeSeamlessMB.SeamlessFuncWrapper(
-            ori, block_sizes, overlap, tolerance, rng, version, shm_name)
+        try:
+            func = ImageMakeSeamlessMB.SeamlessFuncWrapper(
+                ori, block_sizes, overlap, tolerance, rng, version, shm_name)
 
-        if src.shape[0] > 1 or lookup_batch_size > 1:  # if image batch
-            texture_batch = self.batch_using_jobs(func, src, lookup)
-            terminate_generation(finish_event, shm_jobs, t)
-            return (texture_batch,)
-
-        # ____ if single image
-        output = unwrap_and_quilt_seamless(func, src, lookup, 0)
-        terminate_generation(finish_event, shm_jobs, t)
+            is_batch = src.shape[0] > 1 or lookup_batch_size > 1
+            output = self.batch_using_jobs(func, src, lookup) if is_batch else\
+                unwrap_and_quilt_seamless(func, src, lookup, 0)
+        except Exception as ex:
+            raise ex
+        finally:
+            terminate_task(finish_event, shm_jobs, t)
         return (output,)
 
     @staticmethod
@@ -572,17 +575,17 @@ class ImageMakeSeamlessSB:
         lookup_batch_size = lookup.shape[0] if lookup is not None else 0
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))
 
-        func = ImageMakeSeamlessSB.SeamlessFuncWrapper(
-            ori, block_sizes, overlap, rng, version, shm_name)
+        try:
+            func = ImageMakeSeamlessSB.SeamlessFuncWrapper(
+                ori, block_sizes, overlap, rng, version, shm_name)
 
-        if src.shape[0] > 1 or lookup is not None and lookup.shape[0] > 1:  # if image batch
-            texture_batch = self.batch_using_jobs(func, src, lookup)
-            terminate_generation(finish_event, shm_jobs, t)
-            return (texture_batch,)
-
-        # ____ if single image
-        output = unwrap_and_quilt_seamless(func, src, lookup, 0)
-        terminate_generation(finish_event, shm_jobs, t)
+            is_batch = src.shape[0] > 1 or lookup_batch_size > 1
+            output = self.batch_using_jobs(func, src, lookup) if is_batch else\
+                unwrap_and_quilt_seamless(func, src, lookup, 0)
+        except Exception as ex:
+            raise ex
+        finally:
+            terminate_task(finish_event, shm_jobs, t)
         return (output,)
 
     @staticmethod
