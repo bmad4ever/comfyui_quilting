@@ -199,15 +199,18 @@ def unwrap_and_quilt(wrapped_func, image, job_id, is_latent: bool = False):
     return result
 
 
-def unwrap_and_quilt_seamless(wrapped_func, image, lookup, job_id):
+def unwrap_and_quilt_seamless(wrapped_func, image, lookup, job_id, is_latent: bool = False):
     """seamless quilting job when using batches"""
     image = image.cpu().numpy()
     squeeze = len(image.shape) > 3
     image = image.squeeze() if squeeze else image
+    image = np.moveaxis(image, 0, -1) if is_latent else image
     if lookup is not None:
         lookup = lookup.cpu().numpy()
         lookup = lookup.squeeze() if len(lookup.shape) > 3 else lookup
+        lookup = np.moveaxis(lookup, 0, -1) if is_latent else lookup
     result = wrapped_func(image, lookup, job_id)
+    result = np.moveaxis(result, -1, 0) if is_latent else result
     result = torch.from_numpy(result)
     result = result.unsqueeze(0) if squeeze else result
     return result
@@ -218,7 +221,7 @@ def overlap_percentage_to_pixels(block_size: int, overlap: float):
         block_size * get_quilting_shared_input_types()["overlap"][1]["default"])
 
 
-def get_block_sizes(src, block_size_input: int, block_size_upper_bound: int|None = None):
+def get_block_sizes(src, block_size_input: int, block_size_upper_bound: int | None = None):
     if block_size_input >= 3:
         return [block_size_input] * src.shape[0]
 
@@ -243,10 +246,25 @@ def block_size_upper_bound_for_seamless(ori, tex_h, tex_w, overlap_percentage):
                 # similar value to the one computed in guess nice block
                 round(min(tex_w, tex_h) / 1.2),
                 # space required to patch h seam  plus some extra margin
-                round(tex_h/(1+2*overlap_percentage)/1.1)
+                round(tex_h / (1 + 2 * overlap_percentage) / 1.1)
             )
         case _______:
             return None  # texture default dims are fine as bounds
+
+
+def batch_seamless_using_jobs(wrapped_func, src, lookup, is_latent: bool = False):
+    from joblib import Parallel, delayed
+    # process in the same fashion as lists
+    number_of_processes = src.shape[0] if lookup is None else max(src.shape[0], lookup.shape[0])
+    results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
+        delayed(unwrap_and_quilt_seamless)(
+            wrapped_func,
+            src[min(i, src.shape[0] - 1)],
+            lookup[min(i, lookup.shape[0] - 1)]
+            if lookup is not None else None,
+            i, is_latent) for i in range(number_of_processes))
+    return torch.stack(results)
+
 
 # endregion AUX FUNCTIONS & CLASSES
 
@@ -309,7 +327,7 @@ class ImageQuilting:
             setup_pbar_quilting(block_sizes, overlap, out_h, out_w, parallelization_lvl)
 
         try:
-            func = ImageQuilting.ImageQuiltingFuncWrapper(
+            func = self.ImageQuiltingFuncWrapper(
                 block_sizes, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
 
             is_batch = src.shape[0] > 1
@@ -376,11 +394,11 @@ class LatentQuilting:
             setup_pbar_quilting(block_sizes, overlap, out_h, out_w, parallelization_lvl)
 
         try:
-            func = LatentQuilting.LatentQuiltingFuncWrapper(
+            func = self.LatentQuiltingFuncWrapper(
                 block_sizes, overlap, out_h, out_w, tolerance, parallelization_lvl, rng, version, shm_name)
 
             is_batch = src.shape[0] > 1
-            output = self.batch_using_jobs(func, src) if is_batch else\
+            output = self.batch_using_jobs(func, src) if is_batch else \
                 unwrap_and_quilt(func, src, 0, is_latent=True)
         finally:
             terminate_task(finish_event, shm_jobs, t)
@@ -470,29 +488,15 @@ class ImageMakeSeamlessMB:
             ori, block_sizes, overlap, h, w, max(src.shape[0], lookup_batch_size))
 
         try:
-            func = ImageMakeSeamlessMB.SeamlessFuncWrapper(
+            func = self.SeamlessFuncWrapper(
                 ori, block_sizes, overlap, tolerance, rng, version, shm_name)
 
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
-            output = self.batch_using_jobs(func, src, lookup) if is_batch else\
+            output = batch_seamless_using_jobs(func, src, lookup, is_latent=False) if is_batch else \
                 unwrap_and_quilt_seamless(func, src, lookup, 0)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
-
-    @staticmethod
-    def batch_using_jobs(wrapped_func, src, lookup):
-        from joblib import Parallel, delayed
-        # process in the same fashion as lists
-        number_of_processes = src.shape[0] if lookup is None else max(src.shape[0], lookup.shape[0])
-        results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
-            delayed(unwrap_and_quilt_seamless)(
-                wrapped_func,
-                src[min(i, src.shape[0] - 1)],
-                lookup[min(i, lookup.shape[0] - 1)]
-                if lookup is not None else None,
-                i) for i in range(number_of_processes))
-        return torch.stack(results)
 
 
 class ImageMakeSeamlessSB:
@@ -570,29 +574,15 @@ class ImageMakeSeamlessSB:
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))
 
         try:
-            func = ImageMakeSeamlessSB.SeamlessFuncWrapper(
+            func = self.SeamlessFuncWrapper(
                 ori, block_sizes, overlap, rng, version, shm_name)
 
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
-            output = self.batch_using_jobs(func, src, lookup) if is_batch else\
+            output = batch_seamless_using_jobs(func, src, lookup, is_latent=False) if is_batch else \
                 unwrap_and_quilt_seamless(func, src, lookup, 0)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
-
-    @staticmethod
-    def batch_using_jobs(wrapped_func, src, lookup):
-        from joblib import Parallel, delayed
-        # process in the same fashion as lists
-        number_of_processes = src.shape[0] if lookup is None else max(src.shape[0], lookup.shape[0])
-        results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
-            delayed(unwrap_and_quilt_seamless)(
-                wrapped_func,
-                src[min(i, src.shape[0] - 1)],
-                lookup[min(i, lookup.shape[0] - 1)]
-                if lookup is not None else None,
-                i) for i in range(number_of_processes))
-        return torch.stack(results)
 
 
 class GuessNiceBlockSize:
@@ -611,5 +601,153 @@ class GuessNiceBlockSize:
 
     def compute(self, src, simple_and_fast):
         return (guess_nice_block_size(unwrap_to_grey(src[0]), freq_analysis_only=simple_and_fast),)
+
+
+class LatentMakeSeamlessMB:
+    """Transition stripe is built using overlapping square patches."""
+
+    @dataclass
+    class SeamlessFuncWrapper:
+        """Wraps node functionality for easy re-use when using jobs."""
+
+        ori: str
+        block_size: int
+        overlap: int
+        tolerance: float
+        rng: numpy.random.Generator
+        version: int
+        jobs_shm_name: str
+
+        def __call__(self, latent, lookup, job_id):
+            from .make_seamless import make_seamless_horizontally, make_seamless_vertically, make_seamless_both
+
+            match self.ori:
+                case "H":
+                    func = make_seamless_horizontally
+                case "V":
+                    func = make_seamless_vertically
+                case ___:
+                    func = make_seamless_both
+
+            overlap = overlap_percentage_to_pixels(self.block_size, self.overlap)
+            result = func(latent, self.block_size, overlap, self.tolerance,
+                          self.rng, self.version, lookup, UiCoordData(self.jobs_shm_name, job_id))
+
+            return result
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        inputs = LatentQuilting.INPUT_TYPES()["required"]  #get_quilting_shared_input_types()
+        for to_remove in ["parallelization_lvl", "scale", "src"]:
+            inputs.pop(to_remove)
+        inputs["version"][1]["min"] = 1
+        inputs["overlap"][1]["max"] = .5
+        return {
+            "required": {
+                "src": ("LATENT",),
+                "ori": (SEAMLESS_DIRS, {"default": SEAMLESS_DIRS[0]}),
+                **inputs,
+            },
+            "optional": {
+                "lookup": ("LATENT",),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "compute"
+    CATEGORY = NODES_CATEGORY
+
+    def compute(self, src, ori, block_size, overlap, tolerance, seed, version, lookup=None):
+        src = src["samples"]
+        lookup = lookup["samples"] if lookup is not None else None
+        h, w = src.shape[2:4]
+        rng: numpy.random.Generator = np.random.default_rng(seed=seed)
+
+        lookup_batch_size = lookup.shape[0] if lookup is not None else 0
+        finish_event, t, shm_name, shm_jobs = setup_pbar_seamless(
+            ori, [block_size] * src.shape[0], overlap, h, w, max(src.shape[0], lookup_batch_size))
+
+        try:
+            func = self.SeamlessFuncWrapper(
+                ori, block_size, overlap, tolerance, rng, version, shm_name)
+
+            is_batch = src.shape[0] > 1 or lookup_batch_size > 1
+            output = batch_seamless_using_jobs(func, src, lookup, is_latent=True) if is_batch else \
+                unwrap_and_quilt_seamless(func, src, lookup, 0, is_latent=True)
+        finally:
+            terminate_task(finish_event, shm_jobs, t)
+        return ({"samples": output},)
+
+
+class LatentMakeSeamlessSB:
+    """Transition stripe is built using overlapping square patches."""
+
+    @dataclass
+    class SeamlessFuncWrapper:
+        """Wraps node functionality for easy re-use when using jobs."""
+
+        ori: str
+        block_size: int
+        overlap: int
+        rng: numpy.random.Generator
+        version: int
+        jobs_shm_name: str
+
+        def __call__(self, latent, lookup, job_id):
+            from .make_seamless2 import seamless_horizontal, seamless_vertical, seamless_both
+
+            match self.ori:
+                case "H":
+                    func = seamless_horizontal
+                case "V":
+                    func = seamless_vertical
+                case ___:
+                    func = seamless_both
+
+            overlap = overlap_percentage_to_pixels(self.block_size, self.overlap)
+            result = func(latent, self.block_size, overlap, self.version, lookup,
+                          self.rng, UiCoordData(self.jobs_shm_name, job_id))
+
+            return result
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        inputs = LatentQuilting.INPUT_TYPES()["required"]  #get_quilting_shared_input_types()
+        for to_remove in ["tolerance", "parallelization_lvl", "scale", "src"]:
+            inputs.pop(to_remove)
+        inputs["version"][1]["min"] = 1
+        inputs["overlap"][1]["max"] = .5
+        return {
+            "required": {
+                "src": ("LATENT",),
+                "ori": (SEAMLESS_DIRS, {"default": SEAMLESS_DIRS[0]}),
+                **inputs,
+            },
+            "optional": {
+                "lookup": ("LATENT",),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "compute"
+    CATEGORY = NODES_CATEGORY
+
+    def compute(self, src, ori, block_size, overlap, seed, version, lookup=None):
+        src = src["samples"]
+        lookup = lookup["samples"] if lookup is not None else None
+        rng: numpy.random.Generator = np.random.default_rng(seed=seed)
+
+        lookup_batch_size = lookup.shape[0] if lookup is not None else 0
+        finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))
+
+        try:
+            func = self.SeamlessFuncWrapper(ori, block_size, overlap, rng, version, shm_name)
+
+            is_batch = src.shape[0] > 1 or lookup_batch_size > 1
+            output = batch_seamless_using_jobs(func, src, lookup, is_latent=True) if is_batch else \
+                unwrap_and_quilt_seamless(func, src, lookup, 0, is_latent=True)
+        finally:
+            terminate_task(finish_event, shm_jobs, t)
+        return ({"samples": output},)
 
 # endregion NODES
