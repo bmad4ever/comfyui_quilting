@@ -8,6 +8,7 @@ import cv2 as cv
 
 def seamless_horizontal(image, block_size, overlap, version, lookup_texture, rng,
                         uicd: UiCoordData | None = None):
+    lookup_texture = image if lookup_texture is None else lookup_texture
     image = np.roll(image, +block_size // 2, axis=1)
 
     # left & right overlap errors
@@ -59,6 +60,7 @@ def seamless_horizontal(image, block_size, overlap, version, lookup_texture, rng
 
 def seamless_vertical(image, block_size, overlap, version, lookup_texture, rng,
                       uicd: UiCoordData | None = None):
+    lookup_texture = image if lookup_texture is None else lookup_texture
     rotated_solution = seamless_horizontal(np.rot90(image), block_size, overlap,
                                            version, np.rot90(lookup_texture), rng, uicd)
     return np.rot90(rotated_solution, -1).copy()
@@ -72,6 +74,10 @@ def seamless_both(image, block_size, overlap, version, lookup_texture, rng,
                   uicd: UiCoordData | None = None):
     assert image.shape[0] >= block_size
     assert image.shape[1] >= block_size + overlap * 2
+
+    lookup_texture = image if lookup_texture is None else lookup_texture
+    assert lookup_texture.shape[0] >= block_size
+    assert lookup_texture.shape[1] >= block_size + overlap * 2
 
     texture = seamless_vertical(image, block_size, overlap, version, lookup_texture, rng, uicd)
     if texture is None:
