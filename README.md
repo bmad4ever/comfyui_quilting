@@ -16,8 +16,16 @@ Image and latent quilting nodes for [ComfyUI](https://github.com/comfyanonymous/
 The output will have the source dimensions scaled by this amount. 
 
 ###  block_size
-The size of the blocks is given in pixels for images.
-In latent space use the number of pixels divided by 8 instead.
+The size of the blocks is given in pixels for images; for latent images, use the number of pixels divided by 8 instead.
+
+All image nodes allow for the block size to be defined automatically by setting **block_size** to values within the range **[-1, 2]**. The meanings of these values are as follows:
+
+* 0 to 2: Uses the same logic as the **Guess Nice Block Size** node with the option **simple_and_fast** disabled.
+* -1: Enables **simple_and_fast** option, which uses a quick estimation.
+
+When a batch of images is provided, a separate block size guess is computed for each image individually.
+
+Note that the guessed block sizes are recalculated each time and are not stored for future executions. If caching is important, you can use the **Guess Nice Block Size** node instead. However, be aware that this node will not calculate individual block sizes for each image in a batch; it will only inspect the first image.
 
 ### overlap
 Given as a percentage, indicates the portion of the block that overlaps with the next block when stitching.
