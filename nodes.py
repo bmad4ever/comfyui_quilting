@@ -43,7 +43,7 @@ def get_quilting_shared_input_types():
 
         "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
 
-        "version": ("INT", {"default": 1, "min": 0, "max": 3}),
+        "version": ("INT", {"default": 3, "min": 0, "max": 3}),
     }
 
 
