@@ -71,7 +71,7 @@ def get_match_template_method(version: int) -> int:
         case 2:
             return cv.TM_SQDIFF
         case 3:
-            return cv.TM_CCORR_NORMED
+            return cv.TM_CCOEFF_NORMED
         case _:
             raise NotImplemented()
 
