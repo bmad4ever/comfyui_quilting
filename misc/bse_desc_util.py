@@ -27,7 +27,7 @@ def find_optimal_clusters(data: list, max_k: int = 6) -> tuple[list[label], list
         kmeans.fit(data)
         labels = kmeans.labels_
         centers = kmeans.cluster_centers_
-        score = silhouette_score(data, labels)
+        score = silhouette_score(data, labels, random_state=0)
 
         if score > best_score:
             best_k = k
@@ -61,7 +61,8 @@ def min_distance_same_label(positions: list[tuple[int, int]], labels: list[label
     for _label in unique_labels:
         label_indices = np.nonzero(labels == _label)[0]
         if len(label_indices) < 2:
-            min_distances[_label] = None  # not enough points to compute distance
+            min_distances[_label] = 0.0  # not enough points to compute distance
+            min_dist_areas[_label] = 0.0
             continue
 
         label_descriptors = positions[label_indices]  # same label descriptors
