@@ -305,7 +305,7 @@ class ImageQuilting:
                 # using an image batch limits max parallelization lvl to 1 ( values above are ignored ).
 
                 # self explanatory
-                "scale": ("FLOAT", {"default": 4, "min": 2, "max": 10, "step": .1}),
+                "scale": ("FLOAT", {"default": 4, "min": 2, "max": 32, "step": .1}),
 
                 **get_quilting_shared_input_types()
             }
