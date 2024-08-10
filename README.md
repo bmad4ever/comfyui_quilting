@@ -20,8 +20,10 @@ The size of the blocks is given in pixels for images; for latent images, use the
 
 All image nodes allow for the block size to be defined automatically by setting **block_size** to values within the range **[-1, 2]**. The meanings of these values are as follows:
 
-* 0 to 2: Uses the same logic as the **Guess Nice Block Size** node with the option **simple_and_fast** disabled.
-* -1: Enables **simple_and_fast** option, which uses a quick estimation.
+* -1: Uses the same logic as the **Guess Nice Block Size** node with the option **simple_and_fast** enabled, which uses a quick estimation.
+* 0: Similar to the previous option, but **simple_and_fast** is disabled. 
+* 1: Sets block size to 1/3 of the texture shortest edge length. A likely decent block size without needing to readjust the value when changing texture and not prone to algorithmic swings. 
+* 2: Sets block size to 3/4 of the texture shortest edge length. If you need a quick generation or handle a considerably large portion of the texture when running a seamless node but don't want to set the block size manually.  
 
 When a batch of images is provided, a separate block size guess is computed for each image individually.
 
