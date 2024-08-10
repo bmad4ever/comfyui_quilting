@@ -222,15 +222,20 @@ def overlap_percentage_to_pixels(block_size: int, overlap: float):
 
 
 def get_block_sizes(src, block_size_input: int, block_size_upper_bound: int | None = None):
-    if block_size_input >= 3:
-        return [block_size_input] * src.shape[0]
-
-    print(f"block size set to {block_size_input} less than 3!\nguessing nice block size...")
-    only_do_freq_analysis = block_size_input < 0
-    sizes = [guess_nice_block_size(unwrap_to_grey(src[i]), only_do_freq_analysis, block_size_upper_bound)
-             for i in range(src.shape[0])]
-    print(f"guessed block sizes: {sizes}")
-
+    match block_size_input:
+        case _ if block_size_input in [-1,  0]:
+            print(f"block size set to {block_size_input}!\nguessing nice block size...")
+            only_do_freq_analysis = block_size_input < 0
+            sizes = [guess_nice_block_size(unwrap_to_grey(src[i]), only_do_freq_analysis, block_size_upper_bound)
+                     for i in range(src.shape[0])]
+        case 1:
+            print(f"src shape = {src.shape}")
+            sizes = [round(min(src.shape[1:3]) * 1/3)] * src.shape[0]  # a "medium" block size, w/ respect to src
+        case 2:
+            sizes = [round(min(src.shape[1:3]) * 3/4)] * src.shape[0]  # a "big" block size w/ respect to src
+        case __:
+            sizes = [block_size_input] * src.shape[0]
+    print(f"block sizes: {sizes}")
     return sizes
 
 
