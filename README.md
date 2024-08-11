@@ -10,7 +10,7 @@ Image and latent quilting nodes for [ComfyUI](https://github.com/comfyanonymous/
 ![latent quilting workflow](workflows/latent_quilting.png)
 
 
-## Arguments
+## Quilting Arguments
 
 ### scale
 The output will have the source dimensions scaled by this amount. 
@@ -72,3 +72,40 @@ The version parameter affects only patch search and selection. For better perfor
 * 2: Builds on version 1 by using the maximum error of all overlapping sections to minimize worst-case edges. For image nodes, the CIELAB color space is used instead of RGB.
 
 * 3: Employs matchTemplate with the TM_CCOEFF_NORMED option. The final error is 1 minus the minimum value from all overlapping sections, also minimizing worst-case edges.
+
+
+## Make Seamless Nodes
+
+### Additional Arguments
+
+Seamless nodes have the following additional arguments:
+
+* **lookup**: the texture from which the patches are obtained; if no lookup is provided, the src is used instead.
+* **ori**: the orientation in which to make the texture seamless: `H` for horizontally; `V` for vertically; `H & V` for both.
+
+### Make Seamless SP vs MP
+
+Make Seamless Nodes come in two types: Single Patch (SP) and Multi Patch (MP).
+
+Single Patch (SP):
+* Faster than MP if no lookup texture is generated, albeit rarely with acceptable results.
+* May give a more cohesive result in specific cases (e.g., vertically patching a journal without breaking words).
+
+Multi Patch (MP):
+* More likely to produce good results without a lookup texture compared to SP.
+* Handles intricate textures better due to its more granular approach.
+* Allows tweaking variation levels via tolerance adjustments quilting nodes.
+
+<details>
+<summary> - - Image of SP and MP, respectively - - </summary>
+
+![single_and_multi_patch_visualization](documentation/single_and_multi_patch_vis.jpg)
+</details> <br>
+
+Both SP and MP make textures seamless by patching vertically first, then horizontally. The horizontal seam resulting from the second operation is patched with two square patches.
+
+<details>
+<summary> - - Image of the horizontal seam patching - - </summary>
+
+![patching_the_seam_for_seamless_result](documentation/h_seam.jpg)
+</details> <br>
