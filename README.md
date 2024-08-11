@@ -94,7 +94,7 @@ Single Patch (SP):
 Multi Patch (MP):
 * More likely to produce good results without a lookup texture compared to SP.
 * Handles intricate textures better due to its more granular approach.
-* Allows tweaking variation levels via tolerance adjustments quilting nodes.
+* Allows adjusting pattern variation through the tolerance setting, similar to quilting nodes.
 
 <details>
 <summary> - - Image of SP and MP, respectively - - </summary>
