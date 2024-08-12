@@ -147,7 +147,7 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
 
     if ref_block_bottom is not None:
         mask_bottom = get_min_cut_patch_mask_horizontal(np.fliplr(np.rot90(ref_block_bottom)),
-                                                        np.fliplr(np.rot90(ref_block_bottom)), block_size, overlap)
+                                                        np.fliplr(np.rot90(patch_block)), block_size, overlap)
         mask_bottom = np.rot90(np.fliplr(mask_bottom), 3)
         #mask_bottom = cv.blur(mask_bottom, (5, 5))
         masks_list.append(mask_bottom)
