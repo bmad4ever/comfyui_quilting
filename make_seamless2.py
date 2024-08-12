@@ -6,10 +6,11 @@ from .types import UiCoordData
 import numpy as np
 import cv2 as cv
 
+
 def seamless_horizontal(image, block_size, overlap, version, lookup_texture, rng,
                         uicd: UiCoordData | None = None):
     lookup_texture = image if lookup_texture is None else lookup_texture
-    image = np.roll(image, +block_size // 2, axis=1)
+    image = np.roll(image, +block_size // 2, axis=1)  # move seam to addressable space
 
     # left & right overlap errors
     template_method = get_match_template_method(version)
@@ -60,24 +61,14 @@ def seamless_horizontal(image, block_size, overlap, version, lookup_texture, rng
 
 def seamless_vertical(image, block_size, overlap, version, lookup_texture, rng,
                       uicd: UiCoordData | None = None):
-    lookup_texture = image if lookup_texture is None else lookup_texture
-    rotated_solution = seamless_horizontal(np.rot90(image), block_size, overlap,
-                                           version, np.rot90(lookup_texture), rng, uicd)
+    rotated_solution = seamless_horizontal(np.rot90(image), block_size, overlap, version=version, rng=rng, uicd=uicd,
+                                           lookup_texture=None if lookup_texture is None else np.rot90(lookup_texture))
     return np.rot90(rotated_solution, -1).copy()
 
 
-# seamless both needs to patch small seam on last stripe, similar to previous implementation
-# just need to check the offsets and adjust in either function,
-# so that the seam is positioned the same way in both solutions; then just reuse the squares patches code
-
 def seamless_both(image, block_size, overlap, version, lookup_texture, rng,
                   uicd: UiCoordData | None = None):
-    assert image.shape[0] >= block_size
-    assert image.shape[1] >= block_size + overlap * 2
-
     lookup_texture = image if lookup_texture is None else lookup_texture
-    assert lookup_texture.shape[0] >= block_size
-    assert lookup_texture.shape[1] >= block_size + overlap * 2
 
     texture = seamless_vertical(image, block_size, overlap, version, lookup_texture, rng, uicd)
     if texture is None:

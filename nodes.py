@@ -1,15 +1,17 @@
-from .quilting import generate_texture, generate_texture_parallel
-from .guess_block_size import guess_nice_block_size
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing import Event
 from dataclasses import dataclass
-from .types import UiCoordData
 from threading import Thread
 from comfy import utils
 import numpy.random
 import numpy as np
 import torch
 import cv2
+
+from .quilting import generate_texture, generate_texture_parallel
+from .misc.validation_utils import validate_array_shape
+from .guess_block_size import guess_nice_block_size
+from .types import UiCoordData
 
 # TODO add nodes where user defines output's height and width instead of scale
 
@@ -223,16 +225,16 @@ def overlap_percentage_to_pixels(block_size: int, overlap: float):
 
 def get_block_sizes(src, block_size_input: int, block_size_upper_bound: int | None = None):
     match block_size_input:
-        case _ if block_size_input in [-1,  0]:
+        case _ if block_size_input in [-1, 0]:
             print(f"block size set to {block_size_input}!\nguessing nice block size...")
             only_do_freq_analysis = block_size_input < 0
             sizes = [guess_nice_block_size(unwrap_to_grey(src[i]), only_do_freq_analysis, block_size_upper_bound)
                      for i in range(src.shape[0])]
         case 1:
             print(f"src shape = {src.shape}")
-            sizes = [round(min(src.shape[1:3]) * 1/3)] * src.shape[0]  # a "medium" block size, w/ respect to src
+            sizes = [round(min(src.shape[1:3]) * 1 / 3)] * src.shape[0]  # a "medium" block size, w/ respect to src
         case 2:
-            sizes = [round(min(src.shape[1:3]) * 3/4)] * src.shape[0]  # a "big" block size w/ respect to src
+            sizes = [round(min(src.shape[1:3]) * 3 / 4)] * src.shape[0]  # a "big" block size w/ respect to src
         case __:
             sizes = [block_size_input] * src.shape[0]
     print(f"block sizes: {sizes}")
@@ -241,18 +243,14 @@ def get_block_sizes(src, block_size_input: int, block_size_upper_bound: int | No
 
 def block_size_upper_bound_for_seamless(ori, tex_h, tex_w, overlap_percentage):
     """
-    if using guess_block_size in seamless nodes, H seam
+    if using guess_block_size in seamless nodes, mind H seam.
+    note that if the default computed upper bound is lower than the value here obtained, it will be used instead.
     """
     match ori:
         case "H & V":
             # mind H seam w/ the following related assert -> image.shape[1] >= block_size + overlap * 2
             # -> H >= S + S * OP * 2 <-> H / (1 + 2 * OP ) >= S
-            return min(
-                # similar value to the one computed in guess nice block
-                round(min(tex_w, tex_h) / 1.2),
-                # space required to patch h seam  plus some extra margin
-                round(tex_h / (1 + 2 * overlap_percentage) / 1.1)
-            )
+            return round(tex_h / (1 + 2 * overlap_percentage) / 1.1)
         case _______:
             return None  # texture default dims are fine as bounds
 
@@ -271,6 +269,29 @@ def batch_seamless_using_jobs(wrapped_func, src, lookup, is_latent: bool = False
     return torch.stack(results)
 
 
+def validate_gen_args(source, block_size):
+    validate_array_shape(source, min_height=block_size, min_width=block_size,
+                         help="Change the block size.")
+
+
+def validate_seamless_args(orientation, source, lookup, block_size, overlap):
+    if not (overlap * 2 <= block_size):
+        raise ValueError(f"Overlap ({overlap}) needs to be 50% or less of the block size ({block_size}).")
+
+    if orientation == "H & V":
+        validate_array_shape(source, min_height=block_size, min_width=block_size + overlap * 2,
+                             help="Change the block size or the overlap.")
+    else:
+        validate_array_shape(source, min_height=block_size, min_width=block_size,
+                             help="Change the block size.")
+
+    if lookup is not None:
+        validate_array_shape(lookup, min_height=block_size, min_width=block_size,
+                             help="Use a bigger lookup or change the block size.")
+        if lookup.dtype != source.dtype:
+            raise TypeError("lookup_texture dtype does not match image dtype")
+
+
 # endregion AUX FUNCTIONS & CLASSES
 
 
@@ -286,6 +307,7 @@ class ImageQuilting:
 
             block_size = self.block_sizes[job_id]
             overlap = overlap_percentage_to_pixels(block_size, self.overlap)
+            validate_gen_args(image, block_size)
 
             if self.parallelization_lvl == 0:
                 result = generate_texture(
@@ -356,6 +378,7 @@ class LatentQuilting:
         def __call__(self, latent_image, job_id):
             block_size = self.block_sizes[job_id]
             overlap = overlap_percentage_to_pixels(block_size, self.overlap)
+            validate_gen_args(latent_image, block_size)
             if self.parallelization_lvl == 0:
                 return generate_texture(
                     latent_image, block_size, overlap, self.out_h, self.out_w, self.tolerance,
@@ -451,6 +474,7 @@ class ImageMakeSeamlessMB:
                 case ___:
                     func = make_seamless_both
 
+            validate_seamless_args(self.ori, image, lookup, block_size, overlap)
             result = func(image, block_size, overlap, self.tolerance,
                           self.rng, self.version, lookup, UiCoordData(self.jobs_shm_name, job_id))
 
@@ -537,6 +561,7 @@ class ImageMakeSeamlessSB:
                 case ___:
                     func = seamless_both
 
+            validate_seamless_args(self.ori, image, lookup, block_size, overlap)
             result = func(image, block_size, overlap,
                           self.version, lookup, self.rng, UiCoordData(self.jobs_shm_name, job_id))
 
@@ -635,6 +660,7 @@ class LatentMakeSeamlessMB:
                     func = make_seamless_both
 
             overlap = overlap_percentage_to_pixels(self.block_size, self.overlap)
+            validate_seamless_args(self.ori, latent, lookup, self.block_size, overlap)
             result = func(latent, self.block_size, overlap, self.tolerance,
                           self.rng, self.version, lookup, UiCoordData(self.jobs_shm_name, job_id))
 
@@ -710,6 +736,7 @@ class LatentMakeSeamlessSB:
                     func = seamless_both
 
             overlap = overlap_percentage_to_pixels(self.block_size, self.overlap)
+            validate_seamless_args(self.ori, latent, lookup, self.block_size, overlap)
             result = func(latent, self.block_size, overlap, self.version, lookup,
                           self.rng, UiCoordData(self.jobs_shm_name, job_id))
 

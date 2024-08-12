@@ -36,6 +36,9 @@ def find_sync_wavelens(pairs, lower, upper, n):
 
 
 def make_guess(pairs: size_weight_pairs, min_dim: num_pixels, max_block_size: num_pixels | None = None) -> num_pixels:
+    """
+    @param min_dim: shortest edge length in the source image/latent
+    """
     default_value = round(min_dim / 3)  # returned in edge cases
 
     if len(pairs) == 0:  # an edge case; maybe a blank image is sent...
@@ -86,6 +89,8 @@ def guess_nice_block_size(src: np.ndarray, freq_analysis_only: bool = False,
                           max_block_size: num_pixels | None = None) -> num_pixels:
     """
     @param src: numpy image with normalized float32 values
+    @param max_block_size: further restricts the upper bound for the guess.
+                           the actually used upper bound might be lower than max_block_size.
     """
 
     def normalize_weights(pairs: size_weight_pairs):
