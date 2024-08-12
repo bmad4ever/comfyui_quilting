@@ -61,7 +61,7 @@ def compute_errors(diffs: list[np.ndarray], version: int) -> np.ndarray:
         case 3:
             return 1 - np.minimum.reduce(diffs)  # values from 0 to 2
         case _:
-            raise NotImplemented()
+            raise NotImplementedError("Specified patch search version is not implemented.")
 
 
 def get_match_template_method(version: int) -> int:
@@ -73,7 +73,7 @@ def get_match_template_method(version: int) -> int:
         case 3:
             return cv.TM_CCOEFF_NORMED
         case _:
-            raise NotImplemented()
+            raise NotImplementedError("Specified patch search version is not implemented.")
 
 
 # endregion
@@ -102,7 +102,8 @@ def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bott
             templ=ref_block_bottom[:overlap, :], method=template_method))
 
     err_mat = compute_errors(blks_diffs, version)
-    min_val = np.min(err_mat[err_mat > 0 if tolerance > 0 else True])  # ignore zeroes to enforce tolerance usage
+    zeroless_err_mat = err_mat[err_mat > 0 if tolerance > 0 else True]      # ignore zeroes to enforce tolerance usage
+    min_val = np.min(zeroless_err_mat) if len(zeroless_err_mat) > 0 else 0  # mind edge case where all are zero
     y, x = np.nonzero(err_mat <= (1.0 + tolerance) * min_val)
     c = rng.integers(len(y))
     y, x = y[c], x[c]
