@@ -102,8 +102,11 @@ def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bott
             templ=ref_block_bottom[:overlap, :], method=template_method))
 
     err_mat = compute_errors(blks_diffs, version)
-    zeroless_err_mat = err_mat[err_mat > 0 if tolerance > 0 else True]      # ignore zeroes to enforce tolerance usage
-    min_val = np.min(zeroless_err_mat) if len(zeroless_err_mat) > 0 else 0  # mind edge case where all are zero
+    if tolerance > 0:
+        # attempt to ignore zeroes in order to apply tolerance, but mind edge case (e.g., blank image)
+        min_val = np.min(pos_vals) if (pos_vals := err_mat[err_mat > 0]).size > 0 else 0
+    else:
+        min_val = np.min(err_mat)
     y, x = np.nonzero(err_mat <= (1.0 + tolerance) * min_val)
     c = rng.integers(len(y))
     y, x = y[c], x[c]
