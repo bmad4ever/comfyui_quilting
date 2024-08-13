@@ -1,46 +1,10 @@
-from .patch_search import get_generic_find_patch_method
+from .patch_search import get_generic_find_patch_method, blur_patch_mask
 from .misc.bse_type_aliases import num_pixels
 from .types import UiCoordData
 from math import ceil
 import numpy as np
-import cv2 as cv
 
 inf = float('inf')
-
-
-def blur_mask(src_mask):
-    return src_mask  # don't use it for now until further testing
-
-    height, width = src_mask.shape[:2]
-    mask = np.zeros_like(src_mask)  # np.zeros((height, width), dtype=src_mask.dtype)
-
-    center_x = int(width / 2)
-    center_y = int(height / 2)
-
-    # max_radius = np.sqrt(center_x ** 2 + center_y ** 2) - 2  # consider some margin prevent capturing the edges
-    max_dist = block_size // 2 - 2  # 2 of extra margin
-
-    # TODO this mask should be temporarily cached
-    for i in range(width):
-        for j in range(height):
-            distance = max(abs(i - center_y), abs(i - center_x))  # np.sqrt((i - center_y) ** 2 + (j - center_x) ** 2)
-            # the closer to the center, the higher the mask value
-            # mask[i, j] = 1 - (distance / max_radius)
-            mask[i, j] = 1 - (distance / max_dist)
-
-    mask = cv.normalize(mask, None, 0, 1, cv.NORM_MINMAX)
-
-    # blurred = cv.GaussianBlur(src_mask, blur_ksize, blur_ksize)
-    # blurred = cv.blur(src_mask, blur_ksize)
-    src_mask_uint = np.uint8(src_mask[:, :, 0] * 255)
-    blurred = cv.distanceTransform(src_mask_uint, cv.DIST_L2, maskSize=0)
-    blurred *= 255 / max(np.max(blurred), 1)
-    blurred = np.float32(blurred / 255)
-    blurred = np.stack((blurred,) * 3, axis=-1)
-    # blurred = cv.blur(blurred, (3,3))
-
-    result = (mask * blurred) + ((1 - mask) * src_mask)
-    return result
 
 
 def get_numb_of_blocks_to_fill_stripe(block_size, overlap, dim_length):
@@ -164,30 +128,35 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
     # (optional step) blur masks for a more seamless integration ( sometimes makes transition more noticeable, depends )
     masks_list = []
 
-    if ref_block_left is not None:
+    has_left = ref_block_left is None
+    has_right = ref_block_right is not None
+    has_top = ref_block_top is not None
+    has_bottom = ref_block_bottom is not None
+
+    if has_left:
         mask_left = get_min_cut_patch_mask_horizontal(ref_block_left, patch_block, block_size, overlap)
-        mask_left = blur_mask(mask_left)
+        mask_left = blur_patch_mask(mask_left, block_size, overlap, has_left, has_right, has_top, has_bottom)
         masks_list.append(mask_left)
 
-    if ref_block_right is not None:
+    if has_right:
         mask_right = get_min_cut_patch_mask_horizontal(np.fliplr(ref_block_right), np.fliplr(patch_block), block_size,
                                                        overlap)
         mask_right = np.fliplr(mask_right)
-        mask_right = blur_mask(mask_right)
+        mask_right = blur_patch_mask(mask_right, block_size, overlap, has_left, has_right, has_top, has_bottom)
         masks_list.append(mask_right)
 
-    if ref_block_top is not None:
+    if has_top:
         # V , >  counterclockwise rotation
         mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block), block_size, overlap)
         mask_top = np.rot90(mask_top, 3)
-        mask_top = blur_mask(mask_top)
+        mask_top = blur_patch_mask(mask_top, block_size, overlap, has_left, has_right, has_top, has_bottom)
         masks_list.append(mask_top)
 
-    if ref_block_bottom is not None:
+    if has_bottom:
         mask_bottom = get_min_cut_patch_mask_horizontal(np.fliplr(np.rot90(ref_block_bottom)),
                                                         np.fliplr(np.rot90(patch_block)), block_size, overlap)
         mask_bottom = np.rot90(np.fliplr(mask_bottom), 3)
-        mask_bottom = blur_mask(mask_bottom)
+        mask_bottom = blur_patch_mask(mask_bottom, block_size, overlap, has_left, has_right, has_top, has_bottom)
         masks_list.append(mask_bottom)
 
     # --- apply masks and return block ---
@@ -200,14 +169,13 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
 
     # place adjacent block sections
     res_block = np.zeros_like(patch_block)
-    print(f"resBlock dtype={res_block.dtype}")
-    if ref_block_left is not None:
+    if has_left:
         res_block += mask_left * np.roll(ref_block_left, overlap, 1)
-    if ref_block_right is not None:
+    if has_right:
         res_block += mask_right * np.roll(ref_block_right, -overlap, 1)
-    if ref_block_top is not None:
+    if has_top:
         res_block += mask_top * np.roll(ref_block_top, overlap, 0)
-    if ref_block_bottom is not None:
+    if has_bottom:
         res_block += mask_bottom * np.roll(ref_block_bottom, -overlap, 0)
     res_block *= mask_mos
 

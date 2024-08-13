@@ -1,6 +1,10 @@
-from .jena2020.generate import findPatchVertical, findPatchHorizontal, findPatchBoth
+from functools import lru_cache
+from math import ceil
 import numpy as np
 import cv2 as cv
+
+from .jena2020.generate import findPatchVertical, findPatchHorizontal, findPatchBoth
+from .misc.bse_type_aliases import num_pixels
 
 epsilon = np.finfo(float).eps
 
@@ -49,6 +53,7 @@ def get_generic_find_patch_method(version: int):
                       texture, block_size, overlap, tolerance, rng):
         return find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
                              texture, block_size, overlap, tolerance, rng, version)
+
     return vx_patch_find
 
 
@@ -112,3 +117,91 @@ def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bott
     y, x = y[c], x[c]
     return texture[y:y + block_size, x:x + block_size]
 
+
+# min path cut 4 way should go to here?
+
+# TODO because it is not a class func the cache must be cleared when a node finishes running!
+@lru_cache(maxsize=4)
+def patch_blending_vignette(block_size: num_pixels, overlap: num_pixels, left: bool, right: bool, top: bool, bottom: bool):
+    margin = 1 #ceil(overlap / 12)  # must be small
+    power = 2  # controls drop-off
+    p = 6  # controls the shape
+
+    def corner_distance(y, x):
+        distance = ((abs(x - overlap + margin / 2) ** p + abs(y - overlap + margin / 2) ** p) ** (1 / p)) / (
+                overlap - margin)
+        return np.clip(distance, 0, 1)
+
+    mask = np.ones((block_size, block_size), dtype=float)
+    i, j = np.meshgrid(np.arange(overlap), np.arange(overlap))
+    curve_top_left_corner = 1 - corner_distance(i, j) ** power
+
+    # Corners
+    # Top left corner
+    if top and left:
+        mask[:overlap, :overlap] = curve_top_left_corner
+    elif top:
+        mask[:overlap, :overlap] = curve_top_left_corner[:, -1].reshape(-1, 1)  # Copy the last column to all columns
+    elif left:
+        mask[:overlap, :overlap] = curve_top_left_corner[-1, :].reshape(1, -1)  # Copy the last row to all rows
+
+    # Top right corner
+    if top and right:
+        mask[:overlap, -overlap:] = np.flip(curve_top_left_corner, axis=1)
+    elif top:
+        mask[:overlap, -overlap:] = curve_top_left_corner[:, -1].reshape(-1, 1)  # Copy the last column flipped
+    elif right:
+        mask[:overlap, -overlap:] = np.flip(curve_top_left_corner[-1, :]).reshape(1, -1)  # Copy the last row flipped
+
+    # Bottom left corner
+    if bottom and left:
+        mask[-overlap:, :overlap] = np.flip(curve_top_left_corner, axis=0)
+    elif bottom:
+        mask[-overlap:, :overlap] = np.flip(curve_top_left_corner[:, -1]).reshape(-1, 1)  # Copy the last column flipped
+    elif left:
+        mask[-overlap:, :overlap] = curve_top_left_corner[-1, :]  # Copy the last row flipped
+
+    # Bottom right corner
+    if bottom and right:
+        mask[-overlap:, -overlap:] = np.flip(curve_top_left_corner)
+    elif bottom:
+        mask[-overlap:, -overlap:] = (np.flip(curve_top_left_corner[:, -1])
+                                      .reshape(-1, 1))  # Copy the last column flipped
+    elif right:
+        mask[-overlap:, -overlap:] = np.flip(curve_top_left_corner[-1, :]).reshape(1, -1)  # Copy the last row flipped
+
+    # Edges
+    if top:
+        mask[:overlap, overlap:block_size - overlap] = (curve_top_left_corner[:, -1]
+                                                        .reshape(-1, 1))  # Copy the last column vertically
+    if bottom:
+        mask[-overlap:, overlap:block_size - overlap] = (np.flip(curve_top_left_corner[:, -1])
+                                                         .reshape(-1, 1))  # Copy the last column flipped vertically
+    if left:
+        mask[overlap:block_size - overlap, :overlap] = (curve_top_left_corner[-1, :]
+                                                        .reshape(1, -1))  # Copy the last row horizontally
+    if right:
+        mask[overlap:block_size - overlap, -overlap:] = (np.flip(curve_top_left_corner[-1, :])
+                                                         .reshape(1, -1))  # Copy the last row flipped horizontally
+    return mask
+
+
+def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left: bool, right: bool, top: bool, bottom: bool):
+    return src_mask  # don't use it for now until further testing
+
+    vignette = patch_blending_vignette(block_size, overlap, left, right, top, bottom)
+
+    # blurred = cv.GaussianBlur(src_mask, blur_ksize, blur_ksize)
+    src_mask_uint = np.uint8(src_mask[:, :, 0] * 255)
+    blurred = cv.distanceTransform(src_mask_uint, cv.DIST_L2, maskSize=0)
+    blurred = cv.morphologyEx(blurred, cv.MORPH_ERODE, cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3)), iterations=1)
+    blurred = cv.blur(blurred, (5, 5))
+    blurred *= 255 / max(np.max(blurred), 1)
+    blurred = np.float32(blurred / 255)
+
+    #blurred = np.stack((blurred,) * src_mask.shape[2], axis=-1)
+    #vignette = np.stack((vignette,) * src_mask.shape[2], axis=-1)
+
+    result = (vignette * blurred) + ((1 - vignette) * src_mask[:, :, 0])
+    result = np.stack((result, ) * src_mask.shape[2], axis=-1)
+    return result
