@@ -3,8 +3,44 @@ from .misc.bse_type_aliases import num_pixels
 from .types import UiCoordData
 from math import ceil
 import numpy as np
+import cv2 as cv
 
 inf = float('inf')
+
+
+def blur_mask(src_mask):
+    return src_mask  # don't use it for now until further testing
+
+    height, width = src_mask.shape[:2]
+    mask = np.zeros_like(src_mask)  # np.zeros((height, width), dtype=src_mask.dtype)
+
+    center_x = int(width / 2)
+    center_y = int(height / 2)
+
+    # max_radius = np.sqrt(center_x ** 2 + center_y ** 2) - 2  # consider some margin prevent capturing the edges
+    max_dist = block_size // 2 - 2  # 2 of extra margin
+
+    # TODO this mask should be temporarily cached
+    for i in range(width):
+        for j in range(height):
+            distance = max(abs(i - center_y), abs(i - center_x))  # np.sqrt((i - center_y) ** 2 + (j - center_x) ** 2)
+            # the closer to the center, the higher the mask value
+            # mask[i, j] = 1 - (distance / max_radius)
+            mask[i, j] = 1 - (distance / max_dist)
+
+    mask = cv.normalize(mask, None, 0, 1, cv.NORM_MINMAX)
+
+    # blurred = cv.GaussianBlur(src_mask, blur_ksize, blur_ksize)
+    # blurred = cv.blur(src_mask, blur_ksize)
+    src_mask_uint = np.uint8(src_mask[:, :, 0] * 255)
+    blurred = cv.distanceTransform(src_mask_uint, cv.DIST_L2, maskSize=0)
+    blurred *= 255 / max(np.max(blurred), 1)
+    blurred = np.float32(blurred / 255)
+    blurred = np.stack((blurred,) * 3, axis=-1)
+    # blurred = cv.blur(blurred, (3,3))
+
+    result = (mask * blurred) + ((1 - mask) * src_mask)
+    return result
 
 
 def get_numb_of_blocks_to_fill_stripe(block_size, overlap, dim_length):
@@ -117,7 +153,7 @@ def get_min_cut_patch_mask_horizontal(block1, block2, block_size: num_pixels, ov
         path.append(min_arg)
     # Reverse to find full path
     path = path[::-1]
-    mask = np.zeros((block_size, block_size, block1.shape[2]))
+    mask = np.zeros((block_size, block_size, block1.shape[2]), dtype=block1.dtype)
     for i in range(len(path)):
         mask[i, :path[i] + 1] = 1
     return mask
@@ -125,31 +161,33 @@ def get_min_cut_patch_mask_horizontal(block1, block2, block_size: num_pixels, ov
 
 def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
                            patch_block, block_size, overlap):
-    mask_left = get_min_cut_patch_mask_horizontal(ref_block_left, patch_block, block_size, overlap)  # w/ the left block
     # (optional step) blur masks for a more seamless integration ( sometimes makes transition more noticeable, depends )
-    #mask_left = cv.blur(mask_left, (5, 5))
+    masks_list = []
 
-    masks_list = [mask_left]
+    if ref_block_left is not None:
+        mask_left = get_min_cut_patch_mask_horizontal(ref_block_left, patch_block, block_size, overlap)
+        mask_left = blur_mask(mask_left)
+        masks_list.append(mask_left)
 
     if ref_block_right is not None:
         mask_right = get_min_cut_patch_mask_horizontal(np.fliplr(ref_block_right), np.fliplr(patch_block), block_size,
                                                        overlap)
         mask_right = np.fliplr(mask_right)
-        # mask_right = cv.blur(mask_right, (5, 5))
+        mask_right = blur_mask(mask_right)
         masks_list.append(mask_right)
 
     if ref_block_top is not None:
         # V , >  counterclockwise rotation
         mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block), block_size, overlap)
         mask_top = np.rot90(mask_top, 3)
-        #mask_top = cv.blur(mask_top, (5, 5))
+        mask_top = blur_mask(mask_top)
         masks_list.append(mask_top)
 
     if ref_block_bottom is not None:
         mask_bottom = get_min_cut_patch_mask_horizontal(np.fliplr(np.rot90(ref_block_bottom)),
                                                         np.fliplr(np.rot90(patch_block)), block_size, overlap)
         mask_bottom = np.rot90(np.fliplr(mask_bottom), 3)
-        #mask_bottom = cv.blur(mask_bottom, (5, 5))
+        mask_bottom = blur_mask(mask_bottom)
         masks_list.append(mask_bottom)
 
     # --- apply masks and return block ---
@@ -161,20 +199,23 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
     # example: mask1: 0.2 mask2:0.5 -> max = .5 ; sum = .7 -> (.2*lb + .5*tb) * (max/sum) + patch * (1 - max)
 
     # place adjacent block sections
-    resBlock = mask_left * np.roll(ref_block_left, overlap, 1)
+    res_block = np.zeros_like(patch_block)
+    print(f"resBlock dtype={res_block.dtype}")
+    if ref_block_left is not None:
+        res_block += mask_left * np.roll(ref_block_left, overlap, 1)
     if ref_block_right is not None:
-        resBlock += mask_right * np.roll(ref_block_right, -overlap, 1)
+        res_block += mask_right * np.roll(ref_block_right, -overlap, 1)
     if ref_block_top is not None:
-        resBlock += mask_top * np.roll(ref_block_top, overlap, 0)
+        res_block += mask_top * np.roll(ref_block_top, overlap, 0)
     if ref_block_bottom is not None:
-        resBlock += mask_bottom * np.roll(ref_block_bottom, -overlap, 0)
-    resBlock *= mask_mos
+        res_block += mask_bottom * np.roll(ref_block_bottom, -overlap, 0)
+    res_block *= mask_mos
 
     # place patch section
     patch_weight = 1 - masks_max
-    resBlock = resBlock + patch_weight * patch_block
+    res_block = res_block + patch_weight * patch_block
 
-    return resBlock
+    return res_block
 
 
 def make_seamless_vertically(image, block_size, overlap, tolerance, rng: np.random.Generator,
