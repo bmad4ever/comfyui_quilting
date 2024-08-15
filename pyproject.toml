@@ -2,7 +2,7 @@
 name = "comfyui_quilting"
 description = "image and latent quilting nodes for comfyui"
 version = "1.0.0"
-license = "LICENSE"
+license = {text = "MIT License"}
 
 [project.urls]
 Repository = "https://github.com/bmad4ever/comfyui_quilting"
