@@ -1,7 +1,11 @@
 from multiprocessing.shared_memory import SharedMemory
 from dataclasses import dataclass
-
+from typing import TypeAlias
 import numpy as np
+
+
+num_pixels: TypeAlias = int
+percentage: TypeAlias = float
 
 
 class UiCoordData:
@@ -10,12 +14,6 @@ class UiCoordData:
         self.jobs_shm_name = jobs_shm_name
         self.job_id = job_id
         self.__shm: SharedMemory | None = None
-
-    def copy(self):
-        """
-        @return: a copy with the same jobs_shm_name & job_id only; no shm_data.
-        """
-        return UiCoordData(self.jobs_shm_name, self.job_id)
 
     @property
     def _shm(self):
@@ -28,3 +26,23 @@ class UiCoordData:
         shm_data_array[1 + self.job_id] += to_increment
         return shm_data_array[0] > 0
 
+
+@dataclass
+class GenParams:
+    """
+    Data used across multiple quilting subroutines.
+    Used in quilting.py and make_seamless.py
+    """
+    block_size: num_pixels
+    overlap: num_pixels
+    tolerance: percentage
+    blend_into_patch: bool
+    version: int
+
+    @property
+    def bo(self):
+        return self.block_size, self.overlap
+
+    @property
+    def bot(self):
+        return self.block_size, self.overlap, self.tolerance

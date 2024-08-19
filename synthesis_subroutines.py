@@ -3,7 +3,7 @@ import importlib.util
 import cv2 as cv
 
 from .jena2020.generate import *
-from .misc.bse_type_aliases import num_pixels
+from .types import GenParams, num_pixels
 
 epsilon = np.finfo(float).eps
 
@@ -14,11 +14,12 @@ epsilon = np.finfo(float).eps
 def get_find_patch_to_the_right_method(version: int):
     match version:
         case 0:
-            return findPatchHorizontal
+            def jena_right(left, source, gen_args: GenParams, rng):
+                return findPatchVertical(left, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+            return jena_right
         case _:
-            def vx_right(left_block, image, block_size, overlap, tolerance, rng):
-                return find_patch_vx(left_block, None, None, None,
-                                     image, block_size, overlap, tolerance, rng, version)
+            def vx_right(left_block, image, gen_args, rng):
+                return find_patch_vx(left_block, None, None, None, image, gen_args, rng)
 
             return vx_right
 
@@ -26,46 +27,49 @@ def get_find_patch_to_the_right_method(version: int):
 def get_find_patch_below_method(version: int):
     match version:
         case 0:
-            return findPatchVertical
+            def jena_below(top, source, gen_args: GenParams, rng):
+                return findPatchVertical(top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+            return jena_below
         case _:
-            def vx_below(top_block, image, block_size, overlap, tolerance, rng):
-                return find_patch_vx(None, None, top_block, None,
-                                     image, block_size, overlap, tolerance, rng, version)
-
+            def vx_below(top_block, image, gen_args, rng):
+                return find_patch_vx(None, None, top_block, None, image, gen_args, rng)
             return vx_below
 
 
 def get_find_patch_both_method(version: int):
     match version:
         case 0:
-            return findPatchBoth
+            def jena_both(left, top, source, gen_args: GenParams, rng):
+                return findPatchBoth(left, top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+            return jena_both
         case _:
-            def vx_both(left_block, top_block, image, block_size, overlap, tolerance, rng):
-                return find_patch_vx(left_block, None, top_block, None,
-                                     image, block_size, overlap, tolerance, rng, version)
-
+            def vx_both(left_block, top_block, image, gen_args, rng):
+                return find_patch_vx(left_block, None, top_block, None, image, gen_args, rng)
             return vx_both
 
 
 def get_min_cut_patch_horizontal_method(version: int):
-    return get_min_cut_patch_horizontal if version > 0 else getMinCutPatchHorizontal
+    if version == 0:
+        def jena_cut_h(left, patch, gen_args: GenParams):
+            return getMinCutPatchHorizontal(left, patch, gen_args.block_size, gen_args.overlap)
+        return jena_cut_h
+    return get_min_cut_patch_horizontal
 
 
 def get_min_cut_patch_vertical_method(version: int):
-    return get_min_cut_patch_vertical if version > 0 else getMinCutPatchVertical
+    if version == 0:
+        def jena_cut_v(top, patch, gen_args: GenParams):
+            return getMinCutPatchVertical(top, patch, gen_args.block_size, gen_args.overlap)
+        return jena_cut_v
+    return get_min_cut_patch_vertical
 
 
 def get_min_cut_patch_both_method(version: int):
-    return get_min_cut_patch_both if version > 0 else getMinCutPatchBoth
-
-
-def get_generic_find_patch_method(version: int):
-    def vx_patch_find(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
-                      texture, block_size, overlap, tolerance, rng):
-        return find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
-                             texture, block_size, overlap, tolerance, rng, version)
-
-    return vx_patch_find
+    if version == 0:
+        def jena_cut_both(left, top, patch, gen_args: GenParams):
+            return getMinCutPatchBoth(left, top, patch, gen_args.block_size, gen_args.overlap)
+        return jena_cut_both
+    return get_min_cut_patch_both
 
 
 def compute_errors(diffs: list[np.ndarray], version: int) -> np.ndarray:
@@ -98,10 +102,11 @@ def get_match_template_method(version: int) -> int:
 # region  custom implementation of: patch search & min cut + auxiliary methods
 
 def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
-                  texture, block_size, overlap, tolerance,
-                  rng: np.random.Generator, version):
+                  texture, gen_args: GenParams,
+                  rng: np.random.Generator):
+    block_size, overlap, tolerance = gen_args.bot
     blks_diffs = []
-    template_method = get_match_template_method(version)
+    template_method = get_match_template_method(gen_args.version)
     if ref_block_left is not None:
         blks_diffs.append(cv.matchTemplate(
             image=texture[:, :-block_size + overlap],
@@ -119,7 +124,7 @@ def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bott
             image=np.roll(texture, -block_size + overlap, axis=0)[:-block_size + overlap, :],
             templ=ref_block_bottom[:overlap, :], method=template_method))
 
-    err_mat = compute_errors(blks_diffs, version)
+    err_mat = compute_errors(blks_diffs, gen_args.version)
     if tolerance > 0:
         # attempt to ignore zeroes in order to apply tolerance, but mind edge case (e.g., blank image)
         min_val = np.min(pos_vals) if (pos_vals := err_mat[err_mat > 0]).size > 0 else 0
@@ -131,7 +136,6 @@ def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bott
     return texture[y:y + block_size, x:x + block_size]
 
 
-# TODO because it is not a class func the cache must be cleared when a node finishes running!
 @lru_cache(maxsize=4)
 def patch_blending_vignette(block_size: num_pixels, overlap: num_pixels,
                             left: bool, right: bool, top: bool, bottom: bool) -> np.ndarray:
@@ -200,12 +204,9 @@ def patch_blending_vignette(block_size: num_pixels, overlap: num_pixels,
 
 def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left: bool, right: bool, top: bool,
                     bottom: bool):
-    #print(f"src_mask type > {src_mask.dtype}")
-    return src_mask  # don't use it for now until further testing
-
     vignette = patch_blending_vignette(block_size, overlap, left, right, top, bottom)
 
-    src_mask_uint = np.uint8(src_mask[:, :, 0] * 255)
+    src_mask_uint = np.uint8(src_mask[:, :, 0] * 255)  # TODO mean channels ?  or stack post all masks computed?
     blurred = cv.distanceTransform(src_mask_uint, cv.DIST_L2, maskSize=0)
     blurred = cv.morphologyEx(blurred, cv.MORPH_ERODE, cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3)), iterations=1)
     blurred = cv.blur(blurred, (5, 5))
@@ -301,8 +302,13 @@ else:
 
 
 def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
-                           patch_block, block_size, overlap):
-    # (optional step) blur masks for a more seamless integration ( sometimes makes transition more noticeable, depends )
+                           patch_block, gen_args: GenParams):
+    # note -> if blurred, masks weights are scaled with respect the max mask value.
+    # example: mask1: 0.2 mask2:0.5 -> max = .5 ; sum = .7 -> (.2*lb + .5*tb) * (max/sum) + patch * (1 - max)
+    # likely "heavier" to compute, but does not require handling each corner individually
+
+    block_size, overlap = gen_args.bo
+
     masks_list = []
 
     has_left = ref_block_left is not None
@@ -310,57 +316,51 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
     has_top = ref_block_top is not None
     has_bottom = ref_block_bottom is not None
 
+    res_block = np.zeros_like(patch_block)
+
     if has_left:
         mask_left = get_min_cut_patch_mask_horizontal(ref_block_left, patch_block, block_size, overlap)
-        mask_left = blur_patch_mask(mask_left, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        if gen_args.blend_into_patch:
+            mask_left = blur_patch_mask(mask_left, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        res_block += mask_left * np.roll(ref_block_left, overlap, 1)
         masks_list.append(mask_left)
 
     if has_right:
-        mask_right = get_min_cut_patch_mask_horizontal(np.fliplr(ref_block_right), np.fliplr(patch_block), block_size,
-                                                       overlap)
+        mask_right = get_min_cut_patch_mask_horizontal(np.fliplr(ref_block_right), np.fliplr(patch_block),
+                                                       block_size, overlap)
         mask_right = np.fliplr(mask_right)
-        mask_right = blur_patch_mask(mask_right, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        if gen_args.blend_into_patch:
+            mask_right = blur_patch_mask(mask_right, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        res_block += mask_right * np.roll(ref_block_right, -overlap, 1)
         masks_list.append(mask_right)
 
     if has_top:
         # V , >  counterclockwise rotation
-        mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block), block_size,
-                                                     overlap)
+        mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block),
+                                                     block_size, overlap)
         mask_top = np.rot90(mask_top, 3)
-        mask_top = blur_patch_mask(mask_top, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        if gen_args.blend_into_patch:
+            mask_top = blur_patch_mask(mask_top, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        res_block += mask_top * np.roll(ref_block_top, overlap, 0)
         masks_list.append(mask_top)
 
     if has_bottom:
         mask_bottom = get_min_cut_patch_mask_horizontal(np.fliplr(np.rot90(ref_block_bottom)),
                                                         np.fliplr(np.rot90(patch_block)), block_size, overlap)
         mask_bottom = np.rot90(np.fliplr(mask_bottom), 3)
-        mask_bottom = blur_patch_mask(mask_bottom, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        if gen_args.blend_into_patch:
+            mask_bottom = blur_patch_mask(mask_bottom, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        res_block += mask_bottom * np.roll(ref_block_bottom, -overlap, 0)
         masks_list.append(mask_bottom)
 
-    # --- apply masks and return block ---
-    # compute auxiliary data
+    # compute auxiliary data to fix sum at the corners
     mask_s = sum(masks_list)
     masks_max = np.maximum.reduce(masks_list)
     mask_mos = np.divide(masks_max, mask_s, out=np.zeros_like(mask_s), where=mask_s != 0)
-    # note -> if blurred, masks weights are scaled with respect the max mask value.
-    # example: mask1: 0.2 mask2:0.5 -> max = .5 ; sum = .7 -> (.2*lb + .5*tb) * (max/sum) + patch * (1 - max)
 
-    # place adjacent block sections
-    res_block = np.zeros_like(patch_block)
-    if has_left:
-        res_block += mask_left * np.roll(ref_block_left, overlap, 1)
-    if has_right:
-        res_block += mask_right * np.roll(ref_block_right, -overlap, 1)
-    if has_top:
-        res_block += mask_top * np.roll(ref_block_top, overlap, 0)
-    if has_bottom:
-        res_block += mask_bottom * np.roll(ref_block_bottom, -overlap, 0)
-    res_block *= mask_mos
-
-    # place patch section
+    res_block *= mask_mos  # fix corners
     patch_weight = 1 - masks_max
-    res_block = res_block + patch_weight * patch_block
-    return res_block
+    return res_block + patch_weight * patch_block
 
 
 # endregion
@@ -368,24 +368,24 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
 
 # region min cut patch aliases
 
-def get_min_cut_patch_horizontal(left_block, patch_block, block_size, overlap):
+def get_min_cut_patch_horizontal(left_block, patch_block, gen_args: GenParams):
     return get_4way_min_cut_patch(
         left_block, None, None, None,
-        patch_block, block_size, overlap
+        patch_block, gen_args
     )
 
 
-def get_min_cut_patch_vertical(top_block, patch_block, block_size, overlap):
+def get_min_cut_patch_vertical(top_block, patch_block, gen_args: GenParams):
     return get_4way_min_cut_patch(
         None, None, top_block, None,
-        patch_block, block_size, overlap
+        patch_block, gen_args
     )
 
 
-def get_min_cut_patch_both(left_block, top_block, patch_block, block_size, overlap):
+def get_min_cut_patch_both(left_block, top_block, patch_block, gen_args: GenParams):
     return get_4way_min_cut_patch(
         left_block, None, top_block, None,
-        patch_block, block_size, overlap
+        patch_block, gen_args
     )
 
 # endregion
