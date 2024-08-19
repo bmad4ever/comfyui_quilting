@@ -1,12 +1,11 @@
 from functools import lru_cache
-import numpy as np
+import importlib.util
 import cv2 as cv
 
-from .jena2020.generate import findPatchVertical, findPatchHorizontal, findPatchBoth
+from .jena2020.generate import *
 from .misc.bse_type_aliases import num_pixels
 
 epsilon = np.finfo(float).eps
-inf = float('inf')
 
 
 # region   get methods by version
@@ -48,6 +47,18 @@ def get_find_patch_both_method(version: int):
             return vx_both
 
 
+def get_min_cut_patch_horizontal_method(version: int):
+    return get_min_cut_patch_horizontal if version > 0 else getMinCutPatchHorizontal
+
+
+def get_min_cut_patch_vertical_method(version: int):
+    return get_min_cut_patch_vertical if version > 0 else getMinCutPatchVertical
+
+
+def get_min_cut_patch_both_method(version: int):
+    return get_min_cut_patch_both if version > 0 else getMinCutPatchBoth
+
+
 def get_generic_find_patch_method(version: int):
     def vx_patch_find(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
                       texture, block_size, overlap, tolerance, rng):
@@ -84,6 +95,8 @@ def get_match_template_method(version: int) -> int:
 # endregion
 
 
+# region  custom implementation of: patch search & min cut + auxiliary methods
+
 def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
                   texture, block_size, overlap, tolerance,
                   rng: np.random.Generator, version):
@@ -118,12 +131,11 @@ def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bott
     return texture[y:y + block_size, x:x + block_size]
 
 
-# min path cut 4 way should go to here?
-
 # TODO because it is not a class func the cache must be cleared when a node finishes running!
 @lru_cache(maxsize=4)
-def patch_blending_vignette(block_size: num_pixels, overlap: num_pixels, left: bool, right: bool, top: bool, bottom: bool):
-    margin = 1 #ceil(overlap / 12)  # must be small
+def patch_blending_vignette(block_size: num_pixels, overlap: num_pixels,
+                            left: bool, right: bool, top: bool, bottom: bool) -> np.ndarray:
+    margin = 1  # must be small !
     power = 2.5  # controls drop-off
     p = 6  # controls the shape
 
@@ -186,7 +198,8 @@ def patch_blending_vignette(block_size: num_pixels, overlap: num_pixels, left: b
     return mask
 
 
-def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left: bool, right: bool, top: bool, bottom: bool):
+def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left: bool, right: bool, top: bool,
+                    bottom: bool):
     #print(f"src_mask type > {src_mask.dtype}")
     return src_mask  # don't use it for now until further testing
 
@@ -202,7 +215,7 @@ def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left:
     result = (vignette * blurred) + ((1 - vignette) * src_mask[:, :, 0])
     print(f"mask min max = {(np.min(result), np.max(result))}")
     result = np.clip(result, 0, 1)  # better safe than sorry
-    result = np.stack((result, ) * src_mask.shape[2], axis=-1)
+    result = np.stack((result,) * src_mask.shape[2], axis=-1)
     return result
 
 
@@ -245,6 +258,48 @@ def get_min_cut_patch_mask_horizontal_jena2020(block1, block2, block_size: num_p
     return mask
 
 
+if importlib.util.find_spec("pyastar2d") is not None:
+    import pyastar2d
+
+    def get_min_cut_patch_mask_horizontal_astar(block1, block2, block_size: num_pixels, overlap: num_pixels):
+        """
+        @param block1: block to the left, with the overlap on its right edge
+        @param block2: block to the right, with the overlap on its left edge
+        @return: ONLY the mask (not the patched overlap section)
+        """
+        err = ((block1[:, -overlap:] - block2[:, :overlap]) ** 2).mean(2)
+        err *= block_size ** 3
+        err += 1
+        err *= block_size ** 3  # make the lowest value big enough for 1 to be negligible
+        err = np.pad(err, ((1, 1), (0, 0)), 'constant', constant_values=(1, 1))
+
+        start = (0, err.shape[1] // 2)
+        end = (err.shape[0] - 1, err.shape[1] // 2)
+
+        path = pyastar2d.astar_path(err, start, end, allow_diagonal=True)
+        mask = np.ones((block_size, block_size), dtype=block1.dtype)
+        shape_m2 = err.shape[0] - 2
+
+        start_index = 0  # find start index to avoid checking 0 < i every iteration
+        for idx, (i, j) in enumerate(path):
+            if 0 < i:
+                start_index = idx
+                break
+
+        for i, j in path[start_index:]:  # draw path
+            mask[i - 1, j + 1] = 0
+            if i >= shape_m2:
+                break
+
+        cv.floodFill(mask, None, (mask.shape[0] - 1, mask.shape[1] - 1), (0,))
+        mask = np.stack((mask,) * block1.shape[2], axis=-1)
+        return mask
+
+    get_min_cut_patch_mask_horizontal = get_min_cut_patch_mask_horizontal_astar
+else:
+    get_min_cut_patch_mask_horizontal = get_min_cut_patch_mask_horizontal_jena2020
+
+
 def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
                            patch_block, block_size, overlap):
     # (optional step) blur masks for a more seamless integration ( sometimes makes transition more noticeable, depends )
@@ -269,7 +324,8 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
 
     if has_top:
         # V , >  counterclockwise rotation
-        mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block), block_size, overlap)
+        mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block), block_size,
+                                                     overlap)
         mask_top = np.rot90(mask_top, 3)
         mask_top = blur_patch_mask(mask_top, block_size, overlap, has_left, has_right, has_top, has_bottom)
         masks_list.append(mask_top)
@@ -307,45 +363,29 @@ def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_b
     return res_block
 
 
-try:
-    import pyastar2d
-
-    def get_min_cut_patch_mask_horizontal_astar(block1, block2, block_size: num_pixels, overlap: num_pixels):
-        """
-        @param block1: block to the left, with the overlap on its right edge
-        @param block2: block to the right, with the overlap on its left edge
-        @return: ONLY the mask (not the patched overlap section)
-        """
-        err = ((block1[:, -overlap:] - block2[:, :overlap]) ** 2).mean(2)
-        err *= block_size ** 3
-        err += 1
-        err *= block_size ** 3  # make the lowest value big enough for 1 to be negligible
-        err = np.pad(err, ((1, 1), (0, 0)), 'constant', constant_values=(1, 1))
-
-        start = (0, err.shape[1] // 2)
-        end = (err.shape[0] - 1, err.shape[1] // 2)
-
-        path = pyastar2d.astar_path(err, start, end, allow_diagonal=True)
-        mask = np.ones((block_size, block_size, block1.shape[2]), dtype=block1.dtype)
-        shape_m2 = err.shape[0] - 2
-
-        start_index = 0  # find start index to avoid checking 0 < i every iteration
-        for idx, (i, j) in enumerate(path):
-            if 0 < i:
-                start_index = idx
-                break
-
-        for i, j in path[start_index:]:  # draw path
-            mask[i - 1, j + 1, :] = 0
-            if i >= shape_m2:
-                break
-
-        cv.floodFill(mask, None, (mask.shape[0]-1, mask.shape[1]-1), (0, ) * block1.shape[2])
-        return mask
+# endregion
 
 
-    get_min_cut_patch_mask_horizontal = get_min_cut_patch_mask_horizontal_astar
-    print("comfyui_quilting: pyastar2d will be used to compute minimum cut.")
-except Exception:
-    get_min_cut_patch_mask_horizontal = get_min_cut_patch_mask_horizontal_jena2020
-    print("comfyui_quilting: jena2020 based solution will be used to compute minimum cut.")
+# region min cut patch aliases
+
+def get_min_cut_patch_horizontal(left_block, patch_block, block_size, overlap):
+    return get_4way_min_cut_patch(
+        left_block, None, None, None,
+        patch_block, block_size, overlap
+    )
+
+
+def get_min_cut_patch_vertical(top_block, patch_block, block_size, overlap):
+    return get_4way_min_cut_patch(
+        None, None, top_block, None,
+        patch_block, block_size, overlap
+    )
+
+
+def get_min_cut_patch_both(left_block, top_block, patch_block, block_size, overlap):
+    return get_4way_min_cut_patch(
+        left_block, None, top_block, None,
+        patch_block, block_size, overlap
+    )
+
+# endregion

@@ -1,5 +1,6 @@
-from .patch_search import get_find_patch_to_the_right_method, get_find_patch_below_method, get_find_patch_both_method
-from .jena2020.generate import getMinCutPatchHorizontal, getMinCutPatchVertical, getMinCutPatchBoth
+from .synthesis_subroutines import (
+    get_find_patch_to_the_right_method, get_find_patch_below_method, get_find_patch_both_method,
+    get_min_cut_patch_horizontal_method, get_min_cut_patch_vertical_method, get_min_cut_patch_both_method)
 from multiprocessing.shared_memory import SharedMemory
 from dataclasses import dataclass
 from .types import UiCoordData
@@ -50,6 +51,7 @@ import numpy as np
 
 def fill_column(image, initial_block, overlap, rows: int, tolerance, version, rng: np.random.Generator):
     find_patch_below = get_find_patch_below_method(version)
+    get_min_cut_patch = get_min_cut_patch_vertical_method(version)
     block_size = initial_block.shape[0]
     texture_map = np.zeros(
         ((block_size + rows * (block_size - overlap)), block_size, image.shape[2])).astype(image.dtype)
@@ -57,13 +59,14 @@ def fill_column(image, initial_block, overlap, rows: int, tolerance, version, rn
     for i, blk_idx in enumerate(range((block_size - overlap), texture_map.shape[0] - overlap, (block_size - overlap))):
         ref_block = texture_map[(blk_idx - block_size + overlap):(blk_idx + overlap), :block_size]
         patch_block = find_patch_below(ref_block, image, block_size, overlap, tolerance, rng)
-        min_cut_patch = getMinCutPatchVertical(ref_block, patch_block, block_size, overlap)
+        min_cut_patch = get_min_cut_patch(ref_block, patch_block, block_size, overlap)
         texture_map[blk_idx:(blk_idx + block_size), :block_size] = min_cut_patch
     return texture_map
 
 
 def fill_row(image, initial_block, overlap, columns: int, tolerance, version: int, rng: np.random.Generator):
     find_patch_to_the_right = get_find_patch_to_the_right_method(version)
+    get_min_cut_patch = get_min_cut_patch_horizontal_method(version)
     block_size = initial_block.shape[0]
     texture_map = np.zeros(
         (block_size, (block_size + columns * (block_size - overlap)), image.shape[2])).astype(image.dtype)
@@ -71,7 +74,7 @@ def fill_row(image, initial_block, overlap, columns: int, tolerance, version: in
     for i, blk_idx in enumerate(range((block_size - overlap), texture_map.shape[1] - overlap, (block_size - overlap))):
         ref_block = texture_map[:block_size, (blk_idx - block_size + overlap):(blk_idx + overlap)]
         patch_block = find_patch_to_the_right(ref_block, image, block_size, overlap, tolerance, rng)
-        min_cut_patch = getMinCutPatchHorizontal(ref_block, patch_block, block_size, overlap)
+        min_cut_patch = get_min_cut_patch(ref_block, patch_block, block_size, overlap)
         texture_map[:block_size, blk_idx:(blk_idx + block_size)] = min_cut_patch
     return texture_map
 
@@ -79,6 +82,7 @@ def fill_row(image, initial_block, overlap, columns: int, tolerance, version: in
 def fill_quad(rows: int, columns: int, block_size, overlap, texture_map, image, tolerance, version,
               rng: np.random.Generator, uicd: UiCoordData | None):
     find_patch_both = get_find_patch_both_method(version)
+    get_min_cut_patch = get_min_cut_patch_both_method(version)
 
     for i in range(1, rows + 1):
         for j in range(1, columns + 1):
@@ -92,7 +96,7 @@ def fill_quad(rows: int, columns: int, block_size, overlap, texture_map, image, 
                             blk_index_j:(blk_index_j + block_size)]
 
             patch_block = find_patch_both(ref_block_left, ref_block_top, image, block_size, overlap, tolerance, rng)
-            min_cut_patch = getMinCutPatchBoth(ref_block_left, ref_block_top, patch_block, block_size, overlap)
+            min_cut_patch = get_min_cut_patch(ref_block_left, ref_block_top, patch_block, block_size, overlap)
 
             texture_map[blk_index_i:(blk_index_i + block_size), blk_index_j:(blk_index_j + block_size)] = min_cut_patch
 
@@ -360,6 +364,8 @@ class ParaRowsJobInfo:
 
 def fill_rows_ps(pid: int, job: ParaRowsJobInfo, jobs_events: list, uicd: UiCoordData | None):
     find_patch_both = get_find_patch_both_method(job.version)
+    get_min_cut_patch = get_min_cut_patch_both_method(job.version)
+
     # unwrap data
     block_size, overlap, tolerance, rng = job.block_size, job.overlap, job.tolerance, job.rng
     total_procs, image, rows, columns = job.total_procs, job.src, job.rows, job.columns
@@ -396,7 +402,7 @@ def fill_rows_ps(pid: int, job: ParaRowsJobInfo, jobs_events: list, uicd: UiCoor
                             blk_index_j:(blk_index_j + block_size)]
 
             patch_block = find_patch_both(ref_block_left, ref_block_top, image, block_size, overlap, tolerance, rng)
-            min_cut_patch = getMinCutPatchBoth(ref_block_left, ref_block_top, patch_block, block_size, overlap)
+            min_cut_patch = get_min_cut_patch(ref_block_left, ref_block_top, patch_block, block_size, overlap)
 
             texture[blk_index_i:(blk_index_i + block_size), blk_index_j:(blk_index_j + block_size)] = min_cut_patch
 

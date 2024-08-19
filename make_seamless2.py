@@ -1,6 +1,5 @@
 # An alternative approach to making the texture seamless
-from .patch_search import compute_errors, get_match_template_method
-from .jena2020.generate import getMinCutPatchHorizontal
+from .synthesis_subroutines import compute_errors, get_match_template_method, get_min_cut_patch_horizontal
 from .make_seamless import patch_horizontal_seam
 from .types import UiCoordData
 import numpy as np
@@ -40,9 +39,9 @@ def seamless_horizontal(image, block_size, overlap, version, lookup_texture, rng
     fake_block_sized_patch = np.empty((image.shape[0], image.shape[0], image.shape[2]), dtype=image.dtype)
     fake_block_sized_patch[:, :overlap] = lookup_texture[y:y + image.shape[0], x:x + overlap]
     fake_block_sized_patch[:, -overlap:] = lookup_texture[y:y + image.shape[0], x + block_size - overlap:x + block_size]
-    left_side_patch = getMinCutPatchHorizontal(fake_left_block, fake_block_sized_patch, image.shape[0], overlap)
+    left_side_patch = get_min_cut_patch_horizontal(fake_left_block, fake_block_sized_patch, image.shape[0], overlap)
     right_side_patch = np.fliplr(
-        getMinCutPatchHorizontal(
+        get_min_cut_patch_horizontal(
             np.fliplr(fake_right_block),
             np.fliplr(fake_block_sized_patch),
             image.shape[0], overlap

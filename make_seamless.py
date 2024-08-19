@@ -1,4 +1,4 @@
-from .patch_search import get_generic_find_patch_method, get_4way_min_cut_patch
+from .synthesis_subroutines import get_generic_find_patch_method, get_4way_min_cut_patch
 from .types import UiCoordData
 from math import ceil
 import numpy as np
