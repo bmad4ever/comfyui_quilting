@@ -15,7 +15,7 @@ def get_find_patch_to_the_right_method(version: int):
     match version:
         case 0:
             def jena_right(left, source, gen_args: GenParams, rng):
-                return findPatchVertical(left, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+                return findPatchHorizontal(left, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
             return jena_right
         case _:
             def vx_right(left_block, image, gen_args, rng):

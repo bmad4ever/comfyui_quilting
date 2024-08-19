@@ -17,7 +17,7 @@ from .types import UiCoordData, GenParams
 
 NODES_CATEGORY = "Bmad/CV/Quilting"
 SEAMLESS_DIRS = ["H", "V", "H & V"]  # options for seamless nodes
-
+v0_min_tolerance = .001  # if set to zero when using version zero, use this value instead
 
 def get_quilting_shared_input_types():
     return {
@@ -365,6 +365,8 @@ class ImageQuilting:
         out_h, out_w = int(scale * h), int(scale * w)
         block_sizes = get_block_sizes(src, block_size)
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
+        if version == 0 and tolerance < 0.01:
+            tolerance = v0_min_tolerance
 
         # note: the input src should have normalized values, not 0 to 255
 
@@ -437,6 +439,8 @@ class LatentQuilting:
         out_h, out_w = int(scale * h), int(scale * w)
         block_sizes = [block_size] * src.shape[0]
         rng: numpy.random.Generator = np.random.default_rng(seed=seed)
+        if version == 0 and tolerance < 0.01:
+            tolerance = v0_min_tolerance
 
         finish_event, t, shm_name, shm_jobs = \
             setup_pbar_quilting(block_sizes, overlap, out_h, out_w, parallelization_lvl)
