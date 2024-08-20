@@ -1,6 +1,7 @@
 from functools import lru_cache
 import importlib.util
 import cv2 as cv
+import numpy as np
 
 from .jena2020.generate import *
 from .types import GenParams, num_pixels
@@ -136,6 +137,74 @@ def find_patch_vx(ref_block_left, ref_block_right, ref_block_top, ref_block_bott
     return texture[y:y + block_size, x:x + block_size]
 
 
+def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
+                           patch_block, gen_args: GenParams):
+    # note -> if blurred, masks weights are scaled with respect the max mask value.
+    # example: mask1: 0.2 mask2:0.5 -> max = .5 ; sum = .7 -> (.2*lb + .5*tb) * (max/sum) + patch * (1 - max)
+    # likely "heavier" to compute, but does not require handling each corner individually
+
+    block_size, overlap = gen_args.bo
+
+    masks_list = []
+
+    has_left = ref_block_left is not None
+    has_right = ref_block_right is not None
+    has_top = ref_block_top is not None
+    has_bottom = ref_block_bottom is not None
+
+    res_block = np.zeros_like(patch_block)
+
+    def process_block(rolled_block, mask):
+        if gen_args.blend_into_patch:
+            mask = blur_patch_mask(mask, block_size, overlap, has_left, has_right, has_top, has_bottom)
+        masks_list.append(mask)
+        np.add(apply_mask(rolled_block, mask, True), res_block, out=res_block)
+
+    if has_left:
+        mask_left = get_min_cut_patch_mask_horizontal(ref_block_left, patch_block, block_size, overlap)
+        process_block(np.roll(ref_block_left, overlap, 1), mask_left)
+
+    if has_right:
+        mask_right = get_min_cut_patch_mask_horizontal(np.fliplr(ref_block_right), np.fliplr(patch_block),
+                                                       block_size, overlap)
+        mask_right = np.fliplr(mask_right)
+        process_block(np.roll(ref_block_right, -overlap, 1), mask_right)
+
+    if has_top:
+        # V , >  counterclockwise rotation
+        mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block),
+                                                     block_size, overlap)
+        mask_top = np.rot90(mask_top, 3)
+        process_block(np.roll(ref_block_top, overlap, 0), mask_top)
+
+    if has_bottom:
+        mask_bottom = get_min_cut_patch_mask_horizontal(np.fliplr(np.rot90(ref_block_bottom)),
+                                                        np.fliplr(np.rot90(patch_block)), block_size, overlap)
+        mask_bottom = np.rot90(np.fliplr(mask_bottom), 3)
+        process_block(np.roll(ref_block_bottom, -overlap, 0), mask_bottom)
+
+    # compute auxiliary data to weight original/patch & fix sum at the corners
+    mask_s = sum(masks_list)
+    masks_max = np.maximum.reduce(masks_list)
+    mask_mos = np.divide(masks_max, mask_s, out=np.zeros_like(mask_s), where=mask_s != 0)
+
+    apply_mask(res_block, mask_mos, True)  # weight res_block (also fixes sum at corners)
+    patch_weight = np.subtract(1, masks_max, out=masks_max)  # note that masks_max is no longer needed
+    return np.add(res_block, apply_mask(patch_block, patch_weight), out=res_block)
+
+
+def apply_mask(src: np.ndarray, mask: np.ndarray, overwrite: bool = False):
+    """
+    @param src:  image or latent with shape of length 3 (height, width, channels)
+    @param mask: mask with shape of length 2 (height, width)
+    @param overwrite: overwrite src w/ the result
+    """
+    output = src if overwrite else np.empty_like(src)
+    for c_i in range(src.shape[-1]):
+        np.multiply(src[:, :, c_i], mask, out=output[:, :, c_i])
+    return output
+
+
 @lru_cache(maxsize=4)
 def patch_blending_vignette(block_size: num_pixels, overlap: num_pixels,
                             left: bool, right: bool, top: bool, bottom: bool) -> np.ndarray:
@@ -206,18 +275,20 @@ def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left:
                     bottom: bool):
     vignette = patch_blending_vignette(block_size, overlap, left, right, top, bottom)
 
-    src_mask_uint = np.uint8(src_mask[:, :, 0] * 255)  # TODO mean channels ?  or stack post all masks computed?
+    src_mask_uint = (src_mask * 255).astype(np.uint8)
     blurred = cv.distanceTransform(src_mask_uint, cv.DIST_L2, maskSize=0)
     blurred = cv.morphologyEx(blurred, cv.MORPH_ERODE, cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3)), iterations=1)
     blurred = cv.blur(blurred, (5, 5))
     blurred *= 255 / max(np.max(blurred), 1)
     blurred = np.float32(blurred / 255)
 
-    result = (vignette * blurred) + ((1 - vignette) * src_mask[:, :, 0])
-    print(f"mask min max = {(np.min(result), np.max(result))}")
-    result = np.clip(result, 0, 1)  # better safe than sorry
-    result = np.stack((result,) * src_mask.shape[2], axis=-1)
-    return result
+    # compute formula re-using already allocated memory
+    #   formula: (vignette * blurred) + ((1 - vignette) * src_mask)
+    weighted_blurred   = np.multiply(vignette, blurred, out=blurred)
+    one_minus_vignette = 1 - vignette  # vignette is cached, can't edit it
+    weighted_src       = np.multiply(src_mask, one_minus_vignette, out=one_minus_vignette)
+    result = np.add(weighted_blurred, weighted_src, out=weighted_blurred)
+    return np.clip(result, 0, 1, out=result)  # better safe than sorry
 
 
 def get_min_cut_patch_mask_horizontal_jena2020(block1, block2, block_size: num_pixels, overlap: num_pixels):
@@ -253,7 +324,7 @@ def get_min_cut_patch_mask_horizontal_jena2020(block1, block2, block_size: num_p
         path.append(min_arg)
     # Reverse to find full path
     path = path[::-1]
-    mask = np.zeros((block_size, block_size, block1.shape[2]), dtype=block1.dtype)
+    mask = np.zeros((block_size, block_size), dtype=block1.dtype)
     for i in range(len(path)):
         mask[i, :path[i] + 1] = 1
     return mask
@@ -293,74 +364,11 @@ if importlib.util.find_spec("pyastar2d") is not None:
                 break
 
         cv.floodFill(mask, None, (mask.shape[0] - 1, mask.shape[1] - 1), (0,))
-        mask = np.stack((mask,) * block1.shape[2], axis=-1)
         return mask
 
     get_min_cut_patch_mask_horizontal = get_min_cut_patch_mask_horizontal_astar
 else:
     get_min_cut_patch_mask_horizontal = get_min_cut_patch_mask_horizontal_jena2020
-
-
-def get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, ref_block_bottom,
-                           patch_block, gen_args: GenParams):
-    # note -> if blurred, masks weights are scaled with respect the max mask value.
-    # example: mask1: 0.2 mask2:0.5 -> max = .5 ; sum = .7 -> (.2*lb + .5*tb) * (max/sum) + patch * (1 - max)
-    # likely "heavier" to compute, but does not require handling each corner individually
-
-    block_size, overlap = gen_args.bo
-
-    masks_list = []
-
-    has_left = ref_block_left is not None
-    has_right = ref_block_right is not None
-    has_top = ref_block_top is not None
-    has_bottom = ref_block_bottom is not None
-
-    res_block = np.zeros_like(patch_block)
-
-    if has_left:
-        mask_left = get_min_cut_patch_mask_horizontal(ref_block_left, patch_block, block_size, overlap)
-        if gen_args.blend_into_patch:
-            mask_left = blur_patch_mask(mask_left, block_size, overlap, has_left, has_right, has_top, has_bottom)
-        res_block += mask_left * np.roll(ref_block_left, overlap, 1)
-        masks_list.append(mask_left)
-
-    if has_right:
-        mask_right = get_min_cut_patch_mask_horizontal(np.fliplr(ref_block_right), np.fliplr(patch_block),
-                                                       block_size, overlap)
-        mask_right = np.fliplr(mask_right)
-        if gen_args.blend_into_patch:
-            mask_right = blur_patch_mask(mask_right, block_size, overlap, has_left, has_right, has_top, has_bottom)
-        res_block += mask_right * np.roll(ref_block_right, -overlap, 1)
-        masks_list.append(mask_right)
-
-    if has_top:
-        # V , >  counterclockwise rotation
-        mask_top = get_min_cut_patch_mask_horizontal(np.rot90(ref_block_top), np.rot90(patch_block),
-                                                     block_size, overlap)
-        mask_top = np.rot90(mask_top, 3)
-        if gen_args.blend_into_patch:
-            mask_top = blur_patch_mask(mask_top, block_size, overlap, has_left, has_right, has_top, has_bottom)
-        res_block += mask_top * np.roll(ref_block_top, overlap, 0)
-        masks_list.append(mask_top)
-
-    if has_bottom:
-        mask_bottom = get_min_cut_patch_mask_horizontal(np.fliplr(np.rot90(ref_block_bottom)),
-                                                        np.fliplr(np.rot90(patch_block)), block_size, overlap)
-        mask_bottom = np.rot90(np.fliplr(mask_bottom), 3)
-        if gen_args.blend_into_patch:
-            mask_bottom = blur_patch_mask(mask_bottom, block_size, overlap, has_left, has_right, has_top, has_bottom)
-        res_block += mask_bottom * np.roll(ref_block_bottom, -overlap, 0)
-        masks_list.append(mask_bottom)
-
-    # compute auxiliary data to fix sum at the corners
-    mask_s = sum(masks_list)
-    masks_max = np.maximum.reduce(masks_list)
-    mask_mos = np.divide(masks_max, mask_s, out=np.zeros_like(mask_s), where=mask_s != 0)
-
-    res_block *= mask_mos  # fix corners
-    patch_weight = 1 - masks_max
-    return res_block + patch_weight * patch_block
 
 
 # endregion
