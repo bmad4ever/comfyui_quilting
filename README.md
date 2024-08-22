@@ -1,24 +1,44 @@
 # comfyui_quilting
+
 Image and latent quilting nodes for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 
+This project utilizes the texture synthesis technique from the paper: [Alexei A. Efros and William T. Freeman. 2001. Image quilting for texture synthesis and transfer.](https://doi.org/10.1145/383259.383296)
+
+Currently, no texture transfer node is implemented. However, other potential applications and complements to the algorithm were explored, namely:
+
+* Making textures seamless using quilting.
+* Automatically guessing an appropriate block size.
+* Blending into a patch instead of using a binary mask.
+
+For better context, see the examples below and the remaining workflows in the [worklows folder](workflows/)
+
+<details>
+<summary> - - Example Workflows - -  </summary>
 
 ### Image quilting example workflow
 ![image quilting workflow](workflows/image_quilting.png)
 
 
-### Latent quilting example workflow
-![latent quilting workflow](workflows/latent_quilting.png)
+### Vertically seamless texture example workflow
+![latent quilting workflow](workflows/seamless%20image%20SB%20plus%20seamless%20sampling.png)
+</details>
 
 
-## Quilting Arguments
+## How to use
 
-### scale
-The output will have the source dimensions scaled by this amount. 
+<details>
+<summary><h3  style="display:inline-block"> Making sense of the nodes' inputs </h3></summary>
 
 ###  block_size
-The size of the blocks is given in pixels for images; for latent images, use the number of pixels divided by 8 instead.
+**The size of the blocks is given in pixels for images; for latent images, use the number of pixels divided by 8 instead.**
 
-All image nodes allow for the block size to be defined automatically by setting **block_size** to values within the range **[-1, 2]**. The meanings of these values are as follows:
+Block size impacts both the synthesis time and the seamlessness of the generated texture.
+
+Larger blocks can speed up the generation process because fewer blocks are required to cover the same area, and the patch search area is reduced. However, achieving seamless generation involves careful consideration of block size.
+
+If the block size is too small, it may struggle to adequately cover different patterns, leading to issues with texture continuity. Conversely, if the block size is too large, there may not be enough addressable area to properly cover an entire pattern or its variations, potentially resulting in noticeable seams or repetitions.
+
+**To address this challenge, all image nodes allow for the block size to be defined automatically by setting block_size to values within the range of [-1, 2]. The meanings of these values are as follows:**
 
 * -1: Uses the same logic as the **Guess Nice Block Size** node with the option **simple_and_fast** enabled, which uses a quick estimation.
 * 0: Similar to the previous option, but **simple_and_fast** is disabled. 
@@ -74,11 +94,18 @@ The version parameter affects only patch search and selection. For better perfor
 * 3: Employs matchTemplate with the TM_CCOEFF_NORMED option. The final error is 1 minus the minimum value from all overlapping sections, also minimizing worst-case edges.
 
 
-## Make Seamless Nodes
+### blend into patch
 
-### Additional Arguments
+TODO TODO TODO
 
-Seamless nodes have the following additional arguments:
+</details>
+
+<details>
+<summary><h3  style="display:inline-block"> Seamless nodes </h3></summary>
+
+### Additional Inputs
+
+Seamless nodes have the following additional inputs:
 
 * **lookup**: the texture from which the patches are obtained; if no lookup is provided, the src is used instead.
 * **ori**: the orientation in which to make the texture seamless: `H` for horizontally; `V` for vertically; `H & V` for both.
@@ -109,3 +136,11 @@ Both SP and MP make textures seamless by patching vertically first, then horizon
 
 ![patching_the_seam_for_seamless_result](documentation/h_seam.jpg)
 </details> <br>
+
+</details>
+
+## TODO
+
+* instalation/troubleshooting  >  pyastar2d 
+* batch behavior
+* guess block size
