@@ -275,18 +275,24 @@ def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left:
                     bottom: bool):
     vignette = patch_blending_vignette(block_size, overlap, left, right, top, bottom)
 
-    src_mask_uint = (src_mask * 255).astype(np.uint8)
-    blurred = cv.distanceTransform(src_mask_uint, cv.DIST_L2, maskSize=0)
-    blurred = cv.morphologyEx(blurred, cv.MORPH_ERODE, cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3)), iterations=1)
-    blurred = cv.blur(blurred, (5, 5))
-    blurred *= 255 / max(np.max(blurred), 1)
-    blurred = np.float32(blurred / 255)
+    # compute dst_grad & edge_blurred
+    blurred_a = np.ascontiguousarray(src_mask * 255, dtype=np.uint8)
+    blurred_b = np.empty_like(blurred_a, order='c')
+    cv.morphologyEx(blurred_a, cv.MORPH_ERODE, iterations=1, dst=blurred_b,
+                    kernel=cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3)))
+
+    cv.blur(blurred_b, (3, 3), dst=blurred_a)
+    edge_blurred = np.float32(blurred_a) / 255
+
+    cv.distanceTransform(blurred_b, cv.DIST_L2, maskSize=0, dst=blurred_a, dstType=0)
+    cv.blur(blurred_a, (5, 5), dst=blurred_b)
+    dst_grad = np.float32(blurred_b) / max(np.max(blurred_b), 1)
 
     # compute formula re-using already allocated memory
-    #   formula: (vignette * blurred) + ((1 - vignette) * src_mask)
-    weighted_blurred   = np.multiply(vignette, blurred, out=blurred)
+    #   formula: (vignette * dst_grad) + ((1 - vignette) * edge_blurred)
+    weighted_blurred   = np.multiply(vignette, dst_grad, out=dst_grad)
     one_minus_vignette = 1 - vignette  # vignette is cached, can't edit it
-    weighted_src       = np.multiply(src_mask, one_minus_vignette, out=one_minus_vignette)
+    weighted_src       = np.multiply(edge_blurred, one_minus_vignette, out=one_minus_vignette)
     result = np.add(weighted_blurred, weighted_src, out=weighted_blurred)
     return np.clip(result, 0, 1, out=result)  # better safe than sorry
 
