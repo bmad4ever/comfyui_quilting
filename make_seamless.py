@@ -17,7 +17,7 @@ def make_seamless_horizontally(image, gen_args: GenParams, rng: np.random.Genera
     """
     lookup_texture = image if lookup_texture is None else lookup_texture
 
-    block_size, overlap, tolerance= gen_args.block_size, gen_args.overlap, gen_args.tolerance
+    block_size, overlap, tolerance = gen_args.block_size, gen_args.overlap, gen_args.tolerance
     bmo = block_size - overlap
 
     src_h, src_w = image.shape[:2]
@@ -46,6 +46,10 @@ def make_seamless_horizontally(image, gen_args: GenParams, rng: np.random.Genera
     if uicd is not None and uicd.add_to_job_data_slot_and_check_interrupt(1):
         return None
 
+    def fix_corners():
+        ref_block_left[:overlap, -overlap:] = ref_block_top[-overlap:, :overlap]
+        ref_block_right[:overlap, :overlap] = ref_block_top[-overlap:, -overlap:]
+
     for y in range(1, n_h):
         blk_1y = y * bmo  # block top corner y
         blk_2y = blk_1y + block_size  # block bottom corner y
@@ -54,9 +58,10 @@ def make_seamless_horizontally(image, gen_args: GenParams, rng: np.random.Genera
         ref_block_left = left_blocks[blk_1y:blk_2y, :block_size]
         ref_block_right = right_blocks[blk_1y:blk_2y, :block_size]
         ref_block_top = texture_map[(blk_1y - bmo):(blk_1y + overlap), :block_size]
+        fix_corners()
 
         patch_block = find_patch_vx(ref_block_left, ref_block_right, ref_block_top, None,
-                                 lookup_texture, gen_args, rng)
+                                    lookup_texture, gen_args, rng)
         min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, None,
                                                patch_block, gen_args)
 
@@ -69,8 +74,9 @@ def make_seamless_horizontally(image, gen_args: GenParams, rng: np.random.Genera
     ref_block_right = right_blocks[-block_size:, :block_size]
     ref_block_top = np.empty_like(ref_block_left)  # only copy overlap
     ref_block_top[-overlap:, :] = texture_map[-block_size:-block_size + overlap, :block_size]
+    fix_corners()
     patch_block = find_patch_vx(ref_block_left, ref_block_right, ref_block_top, None,
-                             lookup_texture, gen_args, rng)
+                                lookup_texture, gen_args, rng)
     min_cut_patch = get_4way_min_cut_patch(ref_block_left, ref_block_right, ref_block_top, None,
                                            patch_block, gen_args)
     texture_map[-block_size:, :block_size] = min_cut_patch
@@ -120,10 +126,8 @@ def patch_horizontal_seam(texture_to_patch, lookup_texture, gen_args: GenParams,
     xs = (texture_to_patch.shape[1] - block_size) // 2
     xe = xs + block_size
 
-    #find_patch = get_generic_find_patch_method(version=version)
-
     # PATCH H SEAM -> LEFT PATCH
-    adj_top_blk = np.roll(texture_to_patch, ye - overlap, axis=0)[-block_size:, xs - overlap:xe - overlap]
+    adj_top_blk = np.roll(texture_to_patch, -ys - overlap, axis=0)[-block_size:, xs - overlap:xe - overlap]
     adj_btm_blk = np.roll(texture_to_patch, -ye + overlap, axis=0)[:block_size, xs - overlap:xe - overlap]
     adj_lft_blk = np.roll(texture_to_patch, -xs, axis=1)[ys:ye, -block_size:]
     patch = find_patch_vx(adj_lft_blk, None, adj_top_blk, adj_btm_blk, lookup_texture, gen_args, rng)
@@ -133,9 +137,9 @@ def patch_horizontal_seam(texture_to_patch, lookup_texture, gen_args: GenParams,
         return None
 
     # PATCH H SEAM -> RIGHT PATCH
-    adj_top_blk = np.roll(texture_to_patch, ye - overlap, axis=0)[-block_size:, xs + overlap:xe + overlap]
+    adj_top_blk = np.roll(texture_to_patch, -ys - overlap, axis=0)[-block_size:, xs + overlap:xe + overlap]
     adj_btm_blk = np.roll(texture_to_patch, -ye + overlap, axis=0)[:block_size, xs + overlap:xe + overlap]
-    adj_lft_blk = np.roll(texture_to_patch, -xs - overlap * 2, axis=1)[ys:ye, -block_size:]  # review this one
+    adj_lft_blk = np.roll(texture_to_patch, -xs - overlap * 2, axis=1)[ys:ye, -block_size:]
     adj_rgt_blk = np.roll(texture_to_patch, -xs - block_size, axis=1)[ys:ye, :block_size]
     patch = find_patch_vx(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk, lookup_texture, gen_args, rng)
     patch = get_4way_min_cut_patch(adj_lft_blk, adj_rgt_blk, adj_top_blk, adj_btm_blk, patch, gen_args)
