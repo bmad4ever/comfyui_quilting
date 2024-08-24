@@ -67,6 +67,8 @@ When stitching, tolerance defines the margin of acceptable patches.
 
 A tolerance of 1 allows for the selection of patches with an error value up to twice the minimum error, where the minimum error is defined as the error of the most seamless patch. The selection among these patches is random.
 
+Perhaps counterintuitively, **a very low tolerance can sometimes hinder the generation of a seamless texture**. This occurs because patch selection becomes too restrictive, resulting in the lookup texture being output as is. This can lead the generation towards the lookup texture's edges, which may create discontinuities. This is especially important to consider when using small lookup textures relative to the block and generation sizes.
+
 _________________________
 ### parallelization_lvl (Parallelization Level)
 Controls the level of parallel processing during the generation.
