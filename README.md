@@ -180,7 +180,7 @@ When using batches, the generation will still run with the configured level of p
 <details>
 <summary><h3  style="display:inline-block"> Selecting a good block size </h3></summary>
 
-The block size for generation can be estimated using the **Guess Quilting Block Size** node, or using a block size within the reserved range [-1, 0] as described in [block_size](#block_size). However, keep in mind that the automatically determined block size may not always be suitable for the texture, and that block size also affects generation time. A smaller block size may significantly increase the time required for generation.
+The block size for generation can be estimated using the **Guess Quilting Block Size** node, or using a block size within the reserved range [-1, 0] as described in [Making sense of the nodes' inputs > block_size](#block_size). However, keep in mind that the automatically determined block size may not always be suitable for the texture, and that block size also affects generation time. A smaller block size may significantly increase the time required for generation.
 
 <u>Enabling **simple_and_fast** is advised for medium and large textures</u>, and it will skip the *SIFT analysis* described below.
 
