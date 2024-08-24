@@ -112,8 +112,6 @@ def guess_nice_block_size(src: np.ndarray, freq_analysis_only: bool = False,
     desc_analysis_pairs = [] if freq_analysis_only else analyze_keypoint_scales(src)
 
     # all pairs should come already sorted in descending order w/ respect to weight
-    print(freq_analysis_pairs)
-    print(desc_analysis_pairs)
 
     # filter very small distances, with respect to the src size
     min_dim = min(src.shape[:2])
@@ -133,23 +131,4 @@ def guess_nice_block_size(src: np.ndarray, freq_analysis_only: bool = False,
         *normalize_weights(desc_analysis_pairs)
     ]  # may contain duplicates or multiples, that is expected
 
-    print(f"final pairs: {final_pairs}")
     return make_guess(final_pairs, min_dim, max_block_size)
-
-
-if __name__ == "__main__":
-    from cv2 import imread, IMREAD_GRAYSCALE
-
-    image_path = "t9.png"
-    image = imread(image_path, IMREAD_GRAYSCALE)
-    block_size = guess_nice_block_size(image, freq_analysis_only=False)
-    print(f"guessed block_size = {block_size}")
-    # prev values
-    # t9  -> 64
-    # t16 -> 55
-    # t18 -> 82
-    # new values  (freq_only=false, true)
-    # t9  -> 64, 64
-    # t16 -> 44, 44
-    # t18 -> 48, 42
-    # t166 -> 99, 88  (fixed!)

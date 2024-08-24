@@ -53,12 +53,4 @@ def compute_wavelens_of_interest(spectrum: np.ndarray, max_to_fetch: int = 16) -
 def analyze_freq_spectrum(image: np.ndarray, max_items: int = 16) -> size_weight_pairs:
     magnitude_spectrum = compute_fft(image)
     wlen_mag_pairs = compute_wavelens_of_interest(magnitude_spectrum, max_items)
-    print(f"sorted wavelens = {wlen_mag_pairs}")
     return wlen_mag_pairs
-
-
-if __name__ == "__main__":
-    image_path = "../t16.png"
-    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    data = analyze_freq_spectrum(image)
-    print(data)

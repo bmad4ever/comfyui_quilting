@@ -105,12 +105,4 @@ def analyze_keypoint_scales(image: np.ndarray) -> size_weight_pairs:
     dist_weight_pairs.extend([(round(distance_pairs[i]), pairs_areas[i] * label_counts[i])
                               for i, _ in enumerate(labels_coverage)])
     dist_weight_pairs.sort(key=lambda i: i[1], reverse=True)
-    print(f"sorted descs = {dist_weight_pairs}")
     return dist_weight_pairs
-
-
-if __name__ == "__main__":
-    image_path = '../t9.png'
-    image = cv2.imread(image_path)
-    data = analyze_keypoint_scales(image)
-    print(data)
