@@ -29,7 +29,9 @@ For better context, see the examples below and the remaining workflows in the [w
 <details>
 <summary><h3  style="display:inline-block"> Making sense of the nodes' inputs </h3></summary>
 
+_________________________
 ###  block_size
+
 **The size of the blocks is given in pixels for images; for latent images, use the number of pixels divided by 8 instead.**
 
 Block size impacts both the synthesis time and the seamlessness of the generated texture.
@@ -49,10 +51,15 @@ When a batch of images is provided, a separate block size guess is computed for 
 
 Note that the guessed block sizes are recalculated each time and are not stored for future executions. If caching is important, you can use the **Guess Nice Block Size** node instead. However, be aware that this node will not calculate individual block sizes for each image in a batch; it will only inspect the first image.
 
+_________________________
 ### overlap
+
+
 Given as a percentage, indicates the portion of the block that overlaps with the next block when stitching.
 
+_________________________
 ### tolerance
+
 When stitching, tolerance defines the margin of acceptable patches.
 
 - Lower tolerance: Selects sets of patches that better fit their neighborhood but may result in too much repetition.
@@ -60,6 +67,7 @@ When stitching, tolerance defines the margin of acceptable patches.
 
 A tolerance of 1 allows for the selection of patches with an error value up to twice the minimum error, where the minimum error is defined as the error of the most seamless patch. The selection among these patches is random.
 
+_________________________
 ### parallelization_lvl (Parallelization Level)
 Controls the level of parallel processing during the generation.
 
@@ -87,6 +95,7 @@ The sides where the overlap occurs differ for each quadrant,
 so it is not possible to reproduce the same result as the sequential algorithm. Higher levels of parallelization do not suffer from this problem conceptually, 
 however the current implementation won't generate the same output.
 
+_________________________
 ### version
 
 The version parameter affects only patch search and selection. For better performance, it is recommended to use a version above zero. The behaviors for each version are as follows:
@@ -99,7 +108,7 @@ The version parameter affects only patch search and selection. For better perfor
 
 * 3: Employs matchTemplate with the TM_CCOEFF_NORMED option. The final error is 1 minus the minimum value from all overlapping sections, also minimizing worst-case edges.
 
-
+_________________________
 ### blend_into_patch
 
 If enabled, the transition between an existing texture and a patch is made gradual.
@@ -118,6 +127,7 @@ This is done using a combination of three masks:
 <details>
 <summary><h3  style="display:inline-block"> Seamless nodes </h3></summary>
 
+_________________________
 ### Additional Inputs
 
 Seamless nodes have the following additional inputs:
@@ -125,6 +135,7 @@ Seamless nodes have the following additional inputs:
 * **lookup**: the texture from which the patches are obtained; if no lookup is provided, the src is used instead.
 * **ori**: the orientation in which to make the texture seamless: `H` for horizontally; `V` for vertically; `H & V` for both.
 
+_________________________
 ### Make Seamless SP vs MP
 
 Make Seamless Nodes come in two types: Single Patch (SP) and Multi Patch (MP).
