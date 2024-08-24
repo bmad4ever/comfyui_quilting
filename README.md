@@ -165,8 +165,17 @@ Both SP and MP make textures seamless by patching vertically first, then horizon
 
 </details>
 
+
+<details>
+<summary><h3  style="display:inline-block"> List vs Batch processing </h3></summary>
+
+Items in a list are processed one at a time, while items in a batch are processed in parallel.
+
+When using batches, the generation will still run with the configured level of parallelization, regardless of the batch size. Be mindful of this to avoid running too many processes simultaneously.
+
+</details>
+
 ## TODO
 
 * instalation/troubleshooting  >  pyastar2d 
-* batch behavior
 * guess block size
