@@ -367,7 +367,7 @@ class ParaRowsJobInfo:
 def fill_rows_ps(pid: int, job: ParaRowsJobInfo, jobs_events: list, uicd: UiCoordData | None):
     gen_args = job.gen_args
     find_patch_both = get_find_patch_both_method(gen_args.version)
-    get_min_cut_patch = get_min_cut_patch_both_method(gen_args.version, gen_args.blend_into_patch)
+    get_min_cut_patch = get_min_cut_patch_both_method(gen_args.version)
 
     # unwrap data
     block_size, overlap, tolerance, rng = gen_args.block_size, gen_args.overlap, gen_args.tolerance, job.rng
