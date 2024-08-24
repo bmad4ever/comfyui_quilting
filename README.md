@@ -199,7 +199,7 @@ The average descriptor size and the minimum distance within each cluster are wei
 
 3. **Compute Fitness**: 
 The sizes from steps 1 and 2 are used to identify numbers that are closest to their multiples, prioritizing those with larger weights.
-The search is constrained constrained as to do not exceed half the size of the smallest texture dimension or the largest size obtained in the data. 
+The search is constrained as to do not exceed half the size of the smallest texture dimension or the largest size obtained in the data. 
 If step 2 is used, the total weight sum is 2, giving equal importance to both approaches.
 
 4. **Final Selection**: From the list of candidate sizes obtained in step 3, the largest size (not necessarily the one with the best fitness) is selected as the block size.
