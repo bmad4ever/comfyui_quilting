@@ -136,7 +136,8 @@ Seamless nodes have the following additional inputs:
 
 * **lookup**: the texture from which the patches are obtained; if no lookup is provided, the src is used instead.
 * **ori**: the orientation in which to make the texture seamless: `H` for horizontally; `V` for vertically; `H & V` for both.
-
+ 
+Additionally, overlap is constrained to 50% since at least two opposite sides overlap with the texture. While 50% is the maximum possible overlap, where both overlaps meet, this upper limit should not typically be used.
 _________________________
 ### Make Seamless SP vs MP
 
