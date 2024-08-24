@@ -404,8 +404,8 @@ def fill_rows_ps(pid: int, job: ParaRowsJobInfo, jobs_events: list, uicd: UiCoor
                             (blk_index_i - block_size + overlap):(blk_index_i + overlap),
                             blk_index_j:(blk_index_j + block_size)]
 
-            patch_block = find_patch_both(ref_block_left, ref_block_top, image, block_size, overlap, tolerance, rng)
-            min_cut_patch = get_min_cut_patch(ref_block_left, ref_block_top, patch_block, block_size, overlap)
+            patch_block = find_patch_both(ref_block_left, ref_block_top, image, gen_args, rng)
+            min_cut_patch = get_min_cut_patch(ref_block_left, ref_block_top, patch_block, gen_args)
 
             texture[blk_index_i:(blk_index_i + block_size), blk_index_j:(blk_index_j + block_size)] = min_cut_patch
 
