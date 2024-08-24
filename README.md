@@ -175,7 +175,43 @@ When using batches, the generation will still run with the configured level of p
 
 </details>
 
+
+
+<details>
+<summary><h3  style="display:inline-block"> Selecting a good block size </h3></summary>
+
+The block size for generation can be estimated using the **Guess Quilting Block Size** node, or using a block size within the reserved range [-1, 0] as described in [block_size](#block_size). However, keep in mind that the automatically determined block size may not always be suitable for the texture, and that block size also affects generation time. A smaller block size may significantly increase the time required for generation.
+
+<u>Enabling **simple_and_fast** is advised for medium and large textures</u>, and it will skip the *SIFT analysis* described below.
+
+The heuristic for guessing the block size works as follows:
+
+1. **Frequency Spectrum Analysis**: 
+The texture's frequency spectrum is analyzed to identify points with high magnitudes. 
+Only the maximum x or y components are retained, ignoring the direction of patterns. The selected high magnitudes are then adjusted and normalized so that their sum equals one.
+
+2. **Optional SIFT Analysis**: 
+This step is optional and slower, recommended only for small textures. 
+SIFT descriptors are retrieved and clustered by size. The minimum distance  (considering only the maximum of the x and y components) between elements in each cluster is calculated. 
+The average descriptor size and the minimum distance within each cluster are weighted by an estimate of the area coverage in the texture. As in step 1, the weights are adjusted and normalized to sum to one.
+
+3. **Compute Fitness**: 
+The sizes from steps 1 and 2 are used to identify numbers that are closest to their multiples, prioritizing those with larger weights.
+The search is constrained constrained as to do not exceed half the size of the smallest texture dimension or the largest size obtained in the data. 
+If step 2 is used, the total weight sum is 2, giving equal importance to both approaches.
+
+4. **Final Selection**: From the list of candidate sizes obtained in step 3, the largest size (not necessarily the one with the best fitness) is selected as the block size.
+
+
+
+
+
+
+
+
+</details>
+
+
 ## TODO
 
-* instalation/troubleshooting  >  pyastar2d 
-* guess block size
+* instalation & troubleshooting & pyastar2d 
