@@ -74,6 +74,12 @@ Controls the level of parallel processing during the generation.
     * Each quadrant's process will use a number of subprocesses equal to the parallelization level to generate that quadrant. 
     * The generation is done via cascading rows, where a row can only be generated to the same extent as the previous row. Consequently, a process may stay idle waiting for the previous row generation to advance. 
 
+<details>
+<summary> - - Parallel generation diagram - - </summary>
+
+![parallel_generation_visualization](./documentation/quilting_parallel.jpg)
+
+</details> <br>
 
 **Changing the parallelization level will affect the output!**
 
@@ -94,9 +100,18 @@ The version parameter affects only patch search and selection. For better perfor
 * 3: Employs matchTemplate with the TM_CCOEFF_NORMED option. The final error is 1 minus the minimum value from all overlapping sections, also minimizing worst-case edges.
 
 
-### blend into patch
+### blend_into_patch
 
-TODO TODO TODO
+If enabled, the transition between an existing texture and a patch is made gradual.
+
+This is done using a combination of three masks:
+
+* Blurred Min-Cut Mask: similar to the original minimum cut mask but slightly blurred to avoid a harsh transition. The blurring is minimal to prevent the transition from extending to the margins, keeping block edges unnoticeable.
+
+* Distance Transform Mask: this mask scales the transition area based on the size of patches in the minimum cut mask. Larger patches have longer transition areas, ensuring a smoother blend.
+
+* Edge-Enhanced Mask: to prevent low values at the corners, which can make the patch noticeable, this mask combines the first two masks. It prioritizes the first mask near the patch edges to keep the corners unnoticeable.
+
 
 </details>
 
