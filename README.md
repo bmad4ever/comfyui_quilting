@@ -205,16 +205,47 @@ If step 2 is used, the total weight sum is 2, giving equal importance to both ap
 
 4. **Final Selection**: From the list of candidate sizes obtained in step 3, the largest size (not necessarily the one with the best fitness) is selected as the block size.
 
-
-
-
-
-
-
-
 </details>
 
 
-## TODO
+## Installing dependencies
 
-* instalation & troubleshooting & pyastar2d 
+To install only the core dependencies, navigate to your `python` or `python_embedded` folder and run the following command. Replace the `<path>` placeholder with the actual path to the module:
+
+```bash
+python -m pip install -e <path>/comfyui_quilting
+```
+
+Alternatively, if you also want to install pystar2d too, run the following command instead:
+
+```bash
+python -m pip install -e <path>/comfyui_quilting[recommended]
+```
+
+<details>
+<summary><h3  style="display:inline-block"> What about pystar2d? </h3></summary>
+
+### Why install `pystar2d`? 
+
+The core installation allows you to use all the custom nodes provided in this project. Installing `pystar2d` is optional. However, if you choose to install it, the minimum cut computation will utilize an alternative solution implemented with `pystar2d`. This alternative solution offers a slight performance improvement, though its output may differ from the original `jena2020` implementation.
+
+#### Version Compatibility
+
+- If `pystar2d` is installed, you can still use the version 1.0.0 solution for the quilting nodes by setting the `version` input to `0`.
+- Any version above `0` will use the `pystar2d` solution instead.
+
+**Aside from the case mentioned above, outputs may differ depending on whether this optional module is installed or not.**
+
+
+### Installing `pystar2d`
+
+Installing pystar2d requires the following:
+
+1. **C++ Build Tools**: Ensure you have the necessary C++ build tools installed. On windows you will likely need to use the Visual Studio Installer.
+2. **Python Development Files**: You need the Python “includes” and “libs” files, which might be missing in portable versions of Python.
+If they are missing, first verify your portable Python version by running: 
+```python --version```, 
+and then install the full version of Python that corresponds to your portable version.
+Finally, symlink or copy the relevant folders to your portable Python directory.
+
+</details>
