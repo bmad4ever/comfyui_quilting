@@ -4,11 +4,13 @@ Image and latent quilting nodes for [ComfyUI](https://github.com/comfyanonymous/
 
 This project utilizes the texture synthesis technique from the paper: [Alexei A. Efros and William T. Freeman. 2001. Image quilting for texture synthesis and transfer.](https://doi.org/10.1145/383259.383296)
 
-Currently, no texture transfer node is implemented. However, other potential applications and complements to the algorithm were explored, namely:
+Currently, a texture transfer node has not been implemented. However, other potential applications and complements related to the algorithm have been explored:
 
-* Making textures seamless using quilting.
-* Automatically guessing an appropriate block size.
-* Blending into a patch instead of using a binary mask.
+* Application over latent images
+* Automatic block size estimation
+* Parallelization of texture generation
+* Patch blending 
+* Seamless texture conversion
 
 For better context, see the examples below and the remaining workflows in the [worklows folder](workflows/)
 
