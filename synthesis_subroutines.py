@@ -3,9 +3,10 @@ import importlib.util
 import cv2 as cv
 import numpy as np
 
-from .jena2020.generate import *
+import jena2020.generate as j20 
 from .types import GenParams, num_pixels
 
+inf = j20.inf
 epsilon = np.finfo(float).eps
 
 
@@ -16,7 +17,7 @@ def get_find_patch_to_the_right_method(version: int):
     match version:
         case 0:
             def jena_right(left, source, gen_args: GenParams, rng):
-                return findPatchHorizontal(left, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+                return j20.findPatchHorizontal(left, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
             return jena_right
         case _:
             def vx_right(left_block, image, gen_args, rng):
@@ -29,7 +30,7 @@ def get_find_patch_below_method(version: int):
     match version:
         case 0:
             def jena_below(top, source, gen_args: GenParams, rng):
-                return findPatchVertical(top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+                return j20.findPatchVertical(top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
             return jena_below
         case _:
             def vx_below(top_block, image, gen_args, rng):
@@ -41,7 +42,7 @@ def get_find_patch_both_method(version: int):
     match version:
         case 0:
             def jena_both(left, top, source, gen_args: GenParams, rng):
-                return findPatchBoth(left, top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+                return j20.findPatchBoth(left, top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
             return jena_both
         case _:
             def vx_both(left_block, top_block, image, gen_args, rng):
@@ -52,7 +53,7 @@ def get_find_patch_both_method(version: int):
 def get_min_cut_patch_horizontal_method(version: int):
     if version == 0:
         def jena_cut_h(left, patch, gen_args: GenParams):
-            return getMinCutPatchHorizontal(left, patch, gen_args.block_size, gen_args.overlap)
+            return j20.getMinCutPatchHorizontal(left, patch, gen_args.block_size, gen_args.overlap)
         return jena_cut_h
     return get_min_cut_patch_horizontal
 
@@ -60,7 +61,7 @@ def get_min_cut_patch_horizontal_method(version: int):
 def get_min_cut_patch_vertical_method(version: int):
     if version == 0:
         def jena_cut_v(top, patch, gen_args: GenParams):
-            return getMinCutPatchVertical(top, patch, gen_args.block_size, gen_args.overlap)
+            return j20.getMinCutPatchVertical(top, patch, gen_args.block_size, gen_args.overlap)
         return jena_cut_v
     return get_min_cut_patch_vertical
 
@@ -68,7 +69,7 @@ def get_min_cut_patch_vertical_method(version: int):
 def get_min_cut_patch_both_method(version: int):
     if version == 0:
         def jena_cut_both(left, top, patch, gen_args: GenParams):
-            return getMinCutPatchBoth(left, top, patch, gen_args.block_size, gen_args.overlap)
+            return j20.getMinCutPatchBoth(left, top, patch, gen_args.block_size, gen_args.overlap)
         return jena_cut_both
     return get_min_cut_patch_both
 

@@ -1,6 +1,6 @@
-from custom_nodes.comfyui_quilting.misc.bse_desc_util import analyze_keypoint_scales
-from custom_nodes.comfyui_quilting.misc.bse_type_aliases import num_pixels, size_weight_pairs
-from custom_nodes.comfyui_quilting.misc.bse_ft_util import analyze_freq_spectrum
+from .misc.bse_desc_util import analyze_keypoint_scales
+from .misc.bse_type_aliases import num_pixels, size_weight_pairs
+from .misc.bse_ft_util import analyze_freq_spectrum
 from math import ceil
 import numpy as np
 import heapq

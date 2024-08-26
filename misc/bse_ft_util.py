@@ -1,4 +1,4 @@
-from custom_nodes.comfyui_quilting.misc.bse_type_aliases import size_weight_pairs
+from .bse_type_aliases import size_weight_pairs
 import numpy as np
 import cv2
 

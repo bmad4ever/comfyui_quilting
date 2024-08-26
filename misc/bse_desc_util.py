@@ -1,4 +1,4 @@
-from custom_nodes.comfyui_quilting.misc.bse_type_aliases import num_pixels, size_weight_pairs
+from .bse_type_aliases import num_pixels, size_weight_pairs
 from sklearn.metrics import silhouette_score
 from sklearn.metrics import pairwise_distances
 from sklearn.cluster import KMeans

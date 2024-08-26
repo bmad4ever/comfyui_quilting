@@ -53,7 +53,7 @@ def fill_column(image, initial_block, gen_args: GenParams, rows: int, rng: np.ra
     find_patch_below = get_find_patch_below_method(gen_args.version)
     get_min_cut_patch = get_min_cut_patch_vertical_method(gen_args.version)
     block_size = initial_block.shape[0]
-    overlap, tolerance = gen_args.overlap, gen_args.tolerance
+    overlap = gen_args.overlap
     texture_map = np.zeros(
         ((block_size + rows * (block_size - overlap)), block_size, image.shape[2])).astype(image.dtype)
     texture_map[:block_size, :block_size, :] = initial_block
@@ -69,7 +69,7 @@ def fill_row(image, initial_block, gen_args: GenParams, columns: int, rng: np.ra
     find_patch_to_the_right = get_find_patch_to_the_right_method(gen_args.version)
     get_min_cut_patch = get_min_cut_patch_horizontal_method(gen_args.version)
     block_size = initial_block.shape[0]
-    overlap, tolerance = gen_args.overlap, gen_args.tolerance
+    overlap = gen_args.overlap
     texture_map = np.zeros(
         (block_size, (block_size + columns * (block_size - overlap)), image.shape[2])).astype(image.dtype)
     texture_map[:block_size, :block_size, :] = initial_block
@@ -85,7 +85,7 @@ def fill_quad(rows: int, columns: int, gen_args: GenParams, texture_map, image,
               rng: np.random.Generator, uicd: UiCoordData | None):
     find_patch_both = get_find_patch_both_method(gen_args.version)
     get_min_cut_patch = get_min_cut_patch_both_method(gen_args.version)
-    block_size, overlap, tolerance = gen_args.block_size, gen_args.overlap, gen_args.tolerance
+    block_size, overlap = gen_args.bo
 
     for i in range(1, rows + 1):
         for j in range(1, columns + 1):
@@ -370,7 +370,8 @@ def fill_rows_ps(pid: int, job: ParaRowsJobInfo, jobs_events: list, uicd: UiCoor
     get_min_cut_patch = get_min_cut_patch_both_method(gen_args.version)
 
     # unwrap data
-    block_size, overlap, tolerance, rng = gen_args.block_size, gen_args.overlap, gen_args.tolerance, job.rng
+    block_size, overlap = gen_args.bo
+    rng = job.rng
     total_procs, image, rows, columns = job.total_procs, job.src, job.rows, job.columns
     bmo = block_size - overlap
     b_o = ceil(block_size / bmo)
