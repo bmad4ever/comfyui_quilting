@@ -22,7 +22,7 @@ For better context, see the examples below and the remaining workflows in the [w
 
 
 ### Vertically seamless texture example workflow
-![latent quilting workflow](workflows/seamless%20image%20SB%20plus%20seamless%20sampling.png)
+![latent quilting workflow](workflows/seamless%20image%20SP%20plus%20seamless%20sampling.png)
 </details>
 
 
