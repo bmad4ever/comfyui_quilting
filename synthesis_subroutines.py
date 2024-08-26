@@ -1,12 +1,12 @@
 from functools import lru_cache
 import importlib.util
-import cv2 as cv
 import numpy as np
+import cv2 as cv
 
-import jena2020.generate as j20 
+from .jena2020.generate import (inf, findPatchHorizontal, findPatchVertical, findPatchBoth,
+                                getMinCutPatchHorizontal, getMinCutPatchVertical, getMinCutPatchBoth)
 from .types import GenParams, num_pixels
 
-inf = j20.inf
 epsilon = np.finfo(float).eps
 
 
@@ -17,7 +17,8 @@ def get_find_patch_to_the_right_method(version: int):
     match version:
         case 0:
             def jena_right(left, source, gen_args: GenParams, rng):
-                return j20.findPatchHorizontal(left, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+                return findPatchHorizontal(left, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+
             return jena_right
         case _:
             def vx_right(left_block, image, gen_args, rng):
@@ -30,11 +31,13 @@ def get_find_patch_below_method(version: int):
     match version:
         case 0:
             def jena_below(top, source, gen_args: GenParams, rng):
-                return j20.findPatchVertical(top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+                return findPatchVertical(top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+
             return jena_below
         case _:
             def vx_below(top_block, image, gen_args, rng):
                 return find_patch_vx(None, None, top_block, None, image, gen_args, rng)
+
             return vx_below
 
 
@@ -42,18 +45,21 @@ def get_find_patch_both_method(version: int):
     match version:
         case 0:
             def jena_both(left, top, source, gen_args: GenParams, rng):
-                return j20.findPatchBoth(left, top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+                return findPatchBoth(left, top, source, gen_args.block_size, gen_args.overlap, gen_args.tolerance, rng)
+
             return jena_both
         case _:
             def vx_both(left_block, top_block, image, gen_args, rng):
                 return find_patch_vx(left_block, None, top_block, None, image, gen_args, rng)
+
             return vx_both
 
 
 def get_min_cut_patch_horizontal_method(version: int):
     if version == 0:
         def jena_cut_h(left, patch, gen_args: GenParams):
-            return j20.getMinCutPatchHorizontal(left, patch, gen_args.block_size, gen_args.overlap)
+            return getMinCutPatchHorizontal(left, patch, gen_args.block_size, gen_args.overlap)
+
         return jena_cut_h
     return get_min_cut_patch_horizontal
 
@@ -61,7 +67,8 @@ def get_min_cut_patch_horizontal_method(version: int):
 def get_min_cut_patch_vertical_method(version: int):
     if version == 0:
         def jena_cut_v(top, patch, gen_args: GenParams):
-            return j20.getMinCutPatchVertical(top, patch, gen_args.block_size, gen_args.overlap)
+            return getMinCutPatchVertical(top, patch, gen_args.block_size, gen_args.overlap)
+
         return jena_cut_v
     return get_min_cut_patch_vertical
 
@@ -69,7 +76,8 @@ def get_min_cut_patch_vertical_method(version: int):
 def get_min_cut_patch_both_method(version: int):
     if version == 0:
         def jena_cut_both(left, top, patch, gen_args: GenParams):
-            return j20.getMinCutPatchBoth(left, top, patch, gen_args.block_size, gen_args.overlap)
+            return getMinCutPatchBoth(left, top, patch, gen_args.block_size, gen_args.overlap)
+
         return jena_cut_both
     return get_min_cut_patch_both
 
@@ -291,9 +299,9 @@ def blur_patch_mask(src_mask, block_size: num_pixels, overlap: num_pixels, left:
 
     # compute formula re-using already allocated memory
     #   formula: (vignette * dst_grad) + ((1 - vignette) * edge_blurred)
-    weighted_blurred   = np.multiply(vignette, dst_grad, out=dst_grad)
+    weighted_blurred = np.multiply(vignette, dst_grad, out=dst_grad)
     one_minus_vignette = 1 - vignette  # vignette is cached, can't edit it
-    weighted_src       = np.multiply(edge_blurred, one_minus_vignette, out=one_minus_vignette)
+    weighted_src = np.multiply(edge_blurred, one_minus_vignette, out=one_minus_vignette)
     result = np.add(weighted_blurred, weighted_src, out=weighted_blurred)
     return np.clip(result, 0, 1, out=result)  # better safe than sorry
 
@@ -340,6 +348,7 @@ def get_min_cut_patch_mask_horizontal_jena2020(block1, block2, block_size: num_p
 if importlib.util.find_spec("pyastar2d") is not None:
     import pyastar2d
 
+
     def get_min_cut_patch_mask_horizontal_astar(block1, block2, block_size: num_pixels, overlap: num_pixels):
         """
         @param block1: block to the left, with the overlap on its right edge
@@ -372,6 +381,7 @@ if importlib.util.find_spec("pyastar2d") is not None:
 
         cv.floodFill(mask, None, (mask.shape[0] - 1, mask.shape[1] - 1), (0,))
         return mask
+
 
     get_min_cut_patch_mask_horizontal = get_min_cut_patch_mask_horizontal_astar
 else:
