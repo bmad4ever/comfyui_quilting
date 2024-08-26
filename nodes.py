@@ -586,6 +586,7 @@ class ImageMakeSeamlessSB:
         inputs = get_quilting_shared_input_types()
         inputs.pop("parallelization_lvl")
         inputs.pop("tolerance")
+        inputs.pop("seed")
         inputs["version"][1]["min"] = 1
         inputs["overlap"][1]["max"] = .5
         return {
@@ -603,13 +604,13 @@ class ImageMakeSeamlessSB:
     FUNCTION = "compute"
     CATEGORY = NODES_CATEGORY
 
-    def compute(self, src, ori, block_size, overlap, seed, version, blend_into_patch, lookup=None):
+    def compute(self, src, ori, block_size, overlap, version, blend_into_patch, lookup=None):
         # note that src = lookup is the current algorithm policy when lookup is not provided.
         # this policy could change in the future, so do not apply it here too despite being idempotent.
         h, _ = src.shape[1:3]
         blk_size_upper_bound = block_size_upper_bound_for_seamless(ori, h, overlap)
         block_sizes = get_block_sizes(src, block_size, blk_size_upper_bound)
-        rng: numpy.random.Generator = np.random.default_rng(seed=seed)
+        rng: numpy.random.Generator = np.random.default_rng(seed=0)
 
         lookup_batch_size = lookup.shape[0] if lookup is not None else 0
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))
@@ -734,13 +735,12 @@ class LatentMakeSeamlessSB:
             overlap = overlap_percentage_to_pixels(self.block_size, self.overlap)
             validate_seamless_args(self.ori, latent, lookup, self.block_size, overlap)
             gen_args = GenParams(self.block_size, overlap, 0, self.blend_into_patch, self.version)
-
-            return func(latent, gen_args, lookup, self.rng, UiCoordData(self.jobs_shm_name, job_id))
+            return func(latent, lookup, gen_args, self.rng, UiCoordData(self.jobs_shm_name, job_id))
 
     @classmethod
     def INPUT_TYPES(cls):
-        inputs = LatentQuilting.INPUT_TYPES()["required"]  #get_quilting_shared_input_types()
-        for to_remove in ["tolerance", "parallelization_lvl", "scale", "src"]:
+        inputs = LatentQuilting.INPUT_TYPES()["required"]
+        for to_remove in ["tolerance", "parallelization_lvl", "scale", "src", "seed"]:
             inputs.pop(to_remove)
         inputs["version"][1]["min"] = 1
         inputs["overlap"][1]["max"] = .5
@@ -759,10 +759,10 @@ class LatentMakeSeamlessSB:
     FUNCTION = "compute"
     CATEGORY = NODES_CATEGORY
 
-    def compute(self, src, ori, block_size, overlap, seed, version, blend_into_patch, lookup=None):
+    def compute(self, src, ori, block_size, overlap, version, blend_into_patch, lookup=None):
         src = src["samples"]
         lookup = lookup["samples"] if lookup is not None else None
-        rng: numpy.random.Generator = np.random.default_rng(seed=seed)
+        rng: numpy.random.Generator = np.random.default_rng(seed=0)
 
         lookup_batch_size = lookup.shape[0] if lookup is not None else 0
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))

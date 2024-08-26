@@ -22,7 +22,7 @@ For better context, see the examples below and the remaining workflows in the [w
 
 
 ### Vertically seamless texture example workflow
-![latent quilting workflow](workflows/seamless%20image%20SB%20plus%20seamless%20sampling.png)
+![latent quilting workflow](workflows/seamless%20image%20SP%20plus%20seamless%20sampling.png)
 </details>
 
 
@@ -140,9 +140,11 @@ _________________________
 
 Seamless nodes have the following additional inputs:
 
-* **lookup**: the texture from which the patches are obtained; if no lookup is provided, the src is used instead.
+* **lookup**: the texture from which the patches are obtained; if no lookup is provided, the src is used instead.  
 * **ori**: the orientation in which to make the texture seamless: `H` for horizontally; `V` for vertically; `H & V` for both.
- 
+
+When using Seamless SP nodes, the lookup must have at least the same width or height as the source, depending on the value of `ori`. To patch the texture horizontally, the lookup must have at least the same height, and to patch vertically, it must have at least the same width.
+
 Additionally, overlap is constrained to 50% since at least two opposite sides overlap with the texture. While 50% is the maximum possible overlap, where both overlaps meet, this upper limit should not typically be used.
 _________________________
 ### Make Seamless SP vs MP
