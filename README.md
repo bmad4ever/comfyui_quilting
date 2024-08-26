@@ -59,6 +59,8 @@ _________________________
 
 Given as a percentage, indicates the portion of the block that overlaps with the next block when stitching.
 
+There is no subpixel overlap; the discrete overlap value is determined by the rounded value of `overlap * block_size`. In extreme cases, if the rounded value equals `0`, an overlap of `1` pixel is used instead. If it equals `block_size`, an overlap of `block_size - 1` is used instead.
+
 _________________________
 ### tolerance
 
