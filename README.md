@@ -104,7 +104,7 @@ _________________________
 
 The version parameter affects only patch search and selection. For better performance, it is recommended to use a version above zero. The behaviors for each version are as follows:
 
-* 0: Uses the original jena2020 implementation with numpy, calculating the mean of squared differences for each overlapping section and summing these results. This option provides the same results as version 1.0.0.
+* 0: **This option provides the same results as version 1.0.0 and the blend_into_patch input is ignored**. It uses the original jena2020 implementation with numpy, calculating the mean of squared differences for each overlapping section and summing these results. 
 
 * 1: Similar to version 0 but utilizes OpenCV's matchTemplate with the TM_SQDIFF option, improving performance.
 
@@ -124,6 +124,8 @@ This is done using a combination of three masks:
 * Distance Transform Mask: this mask scales the transition area based on the size of patches in the minimum cut mask. Larger patches have longer transition areas, ensuring a smoother blend.
 
 * Edge-Enhanced Mask: to prevent low values at the corners, which can make the patch noticeable, this mask combines the first two masks. It prioritizes the first mask near the patch edges to keep the corners unnoticeable.
+
+If the version input is set to zero, blend_into_patch is ignored.
 
 
 </details>
