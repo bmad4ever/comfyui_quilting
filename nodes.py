@@ -237,8 +237,8 @@ def unwrap_and_quilt_seamless(wrapped_func, image, lookup, job_id, is_latent: bo
 
 
 def overlap_percentage_to_pixels(block_size: int, overlap: float):
-    return int(block_size * overlap) if overlap > 0 else int(
-        block_size * get_quilting_shared_input_types()["overlap"][1]["default"])
+    """Forces into acceptable bounds in case of extreme values"""
+    return np.clip(round(block_size * overlap), 1, block_size - 1)
 
 
 def get_block_sizes(src, block_size_input: int, block_size_upper_bound: int | None = None):
@@ -289,7 +289,7 @@ def batch_seamless_using_jobs(wrapped_func, src, lookup, is_latent: bool = False
 
 def validate_gen_args(source, block_size):
     validate_array_shape(source, min_height=block_size, min_width=block_size,
-                         help="Change the block size.")
+                         help_msg="Change the block size.")
 
 
 def validate_seamless_args(orientation, source, lookup, block_size, overlap):
@@ -298,14 +298,14 @@ def validate_seamless_args(orientation, source, lookup, block_size, overlap):
 
     if orientation == "H & V":
         validate_array_shape(source, min_height=block_size, min_width=block_size + overlap * 2,
-                             help="Change the block size or the overlap.")
+                             help_msg="Change the block size or the overlap.")
     else:
         validate_array_shape(source, min_height=block_size, min_width=block_size,
-                             help="Change the block size.")
+                             help_msg="Change the block size.")
 
     if lookup is not None:
         validate_array_shape(lookup, min_height=block_size, min_width=block_size,
-                             help="Use a bigger lookup or change the block size.")
+                             help_msg="Use a bigger lookup or change the block size.")
         if lookup.dtype != source.dtype:
             raise TypeError("lookup_texture dtype does not match image dtype")
 
