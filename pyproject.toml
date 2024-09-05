@@ -1,7 +1,7 @@
 [project]
 name = "comfyui_quilting"
 description = "image and latent quilting nodes for comfyui"
-version = "3.0.0"
+version = "3.0.1"
 license = {text = "MIT License"}
 dependencies = [
 	'bmquilting[comfy] @ git+https://github.com/bmad4ever/bmquilting.git'
