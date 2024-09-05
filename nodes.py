@@ -1,23 +1,26 @@
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing import Event
-from dataclasses import dataclass
 from threading import Thread
 from comfy import utils
 import numpy.random
 import numpy as np
-import torch
 import cv2
 
-from .quilting import generate_texture, generate_texture_parallel
-from .misc.validation_utils import validate_array_shape
-from .guess_block_size import guess_nice_block_size
-from .types import UiCoordData, GenParams
+from bmquilting.misc.validation_utils import validate_array_shape
+from bmquilting.guess_block_size import guess_nice_block_size
+from bmquilting.types import Orientation, UiCoordData
+from bmquilting.comfy_utils.utilities import (
+    unwrap_latent_and_quilt, unwrap_latent_and_quilt_seamless, overlap_percentage_to_pixels)
+from bmquilting.comfy_utils.wrapped_functions import (
+    QuiltingFuncWrapper, batch_using_jobs,
+    SeamlessMPFuncWrapper, SeamlessSPFuncWrapper, batch_seamless_using_jobs)
 
 # TODO add nodes where user defines output's height and width instead of scale
 
 NODES_CATEGORY = "Bmad/CV/Quilting"
-SEAMLESS_DIRS = ["H", "V", "H & V"]  # options for seamless nodes
+SEAMLESS_DIRS = [orientation.value for orientation in Orientation]  # options for seamless nodes
 v0_min_tolerance = .001  # if set to zero when using version zero, use this value instead
+
 
 def get_quilting_shared_input_types():
     return {
@@ -49,32 +52,6 @@ def get_quilting_shared_input_types():
 
         "blend_into_patch": ("BOOLEAN", {"default": False})
     }
-
-
-@dataclass
-class QuiltingFuncWrapper:
-    """Wraps node functionality for easy re-use when using jobs."""
-    block_sizes: list[int]
-    overlap: float
-    out_h: int
-    out_w: int
-    tolerance: float
-    parallelization_lvl: int
-    rng: numpy.random.Generator
-    blend_into_patch: bool
-    version: int
-    jobs_shm_name: str
-
-
-@dataclass
-class SeamlessFuncWrapper:
-    """Wraps node functionality for easy re-use when using jobs."""
-    ori: str  # SEAMLESS_DIRS
-    overlap: int
-    rng: numpy.random.Generator
-    blend_into_patch: bool
-    version: int
-    jobs_shm_name: str
 
 
 # region AUX FUNCTIONS
@@ -110,7 +87,7 @@ def terminate_task(finished_event, jobs_shared_memory, pbt: Thread):
     4. closes/unlinks shared memory
     5. if process stopped due to interruption executes throw_exception_if_processing_interrupted()
     """
-    from .synthesis_subroutines import patch_blending_vignette
+    from bmquilting.synthesis_subroutines import patch_blending_vignette
     patch_blending_vignette.cache_clear()
 
     coord_jobs_array = np.ndarray((1,), dtype=np.dtype('uint32'), buffer=jobs_shared_memory.buf)
@@ -145,15 +122,15 @@ def setup_pbar_seamless(ori, block_sizes: list[int], overlap_percentage: float, 
     """
     here batch_len may differ from block_sizes due to the number of lookup textures
     """
-    from .make_seamless import get_numb_of_blocks_to_fill_stripe
+    from bmquilting.make_seamless import get_numb_of_blocks_to_fill_stripe
     total_steps: int = 0
     for i in range(batch_len):
         block_size = block_sizes[min(i, len(block_sizes) - 1)]
         overlap = overlap_percentage_to_pixels(block_size, overlap_percentage)
         match ori:
-            case "H":
+            case Orientation.H:
                 total_steps += get_numb_of_blocks_to_fill_stripe(block_size, overlap, width)
-            case "V":
+            case Orientation.V:
                 total_steps += get_numb_of_blocks_to_fill_stripe(block_size, overlap, height)
             case _:
                 total_steps += (
@@ -164,10 +141,10 @@ def setup_pbar_seamless(ori, block_sizes: list[int], overlap_percentage: float, 
     return setup_pbar(total_steps, 0, batch_len)
 
 
-def setup_pbar_seamless_v2(ori, batch_len):
+def setup_pbar_seamless_v2(ori: Orientation, batch_len: int):
     # 3 increments per big block + 2 for the "H & V" H Seam patch
     match ori:
-        case "H & V":
+        case Orientation.H_AND_V:
             total_steps = 2 + 3 * 2
         case _:
             total_steps = 3
@@ -182,15 +159,8 @@ def setup_pbar(total_steps, par_lvl, batch_len):
     pbar: utils.ProgressBar = utils.ProgressBar(total_steps)
     finished_event = Event()
 
-    if batch_len > 1:
-        n_jobs = batch_len
-        n_jobs *= 1 if par_lvl == 0 else 4
-    else:
-        n_jobs = 1 if par_lvl == 0 else 4
-        n_jobs *= par_lvl if par_lvl > 0 else 1
-
-    size = (1 + n_jobs) * np.dtype('uint32').itemsize
-    shm_jobs = SharedMemory(create=True, size=size)
+    shm_size, n_jobs = UiCoordData.get_required_shm_size_and_number_of_jobs(par_lvl, batch_len)
+    shm_jobs = SharedMemory(create=True, size=shm_size)
 
     t = Thread(target=waiting_loop, args=(finished_event, pbar, total_steps, shm_jobs.name, n_jobs))
     t.start()
@@ -204,41 +174,6 @@ def unwrap_to_grey(image, is_latent: bool = False) -> np.ndarray:
     image = image.squeeze() if squeeze else image
     image = np.moveaxis(image, 0, -1) if is_latent else image
     return cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-
-
-def unwrap_and_quilt(wrapped_func, image, job_id, is_latent: bool = False):
-    """quilting job when using batches"""
-    squeeze = len(image.shape) > 3
-    image = image.cpu().numpy()
-    image = image.squeeze() if squeeze else image
-    image = np.moveaxis(image, 0, -1) if is_latent else image
-    result = wrapped_func(image, job_id)
-    result = np.moveaxis(result, -1, 0) if is_latent else result
-    result = torch.from_numpy(result)
-    result = result.unsqueeze(0) if squeeze else result
-    return result
-
-
-def unwrap_and_quilt_seamless(wrapped_func, image, lookup, job_id, is_latent: bool = False):
-    """seamless quilting job when using batches"""
-    image = image.cpu().numpy()
-    squeeze = len(image.shape) > 3
-    image = image.squeeze() if squeeze else image
-    image = np.moveaxis(image, 0, -1) if is_latent else image
-    if lookup is not None:
-        lookup = lookup.cpu().numpy()
-        lookup = lookup.squeeze() if len(lookup.shape) > 3 else lookup
-        lookup = np.moveaxis(lookup, 0, -1) if is_latent else lookup
-    result = wrapped_func(image, lookup, job_id)
-    result = np.moveaxis(result, -1, 0) if is_latent else result
-    result = torch.from_numpy(result)
-    result = result.unsqueeze(0) if squeeze else result
-    return result
-
-
-def overlap_percentage_to_pixels(block_size: int, overlap: float):
-    """Forces into acceptable bounds in case of extreme values"""
-    return np.clip(round(block_size * overlap), 1, block_size - 1)
 
 
 def get_block_sizes(src, block_size_input: int, block_size_upper_bound: int | None = None):
@@ -273,25 +208,6 @@ def block_size_upper_bound_for_seamless(ori, tex_h, overlap_percentage):
             return None  # texture default dims are fine as bounds
 
 
-def batch_seamless_using_jobs(wrapped_func, src, lookup, is_latent: bool = False):
-    from joblib import Parallel, delayed
-    # process in the same fashion as lists
-    number_of_processes = src.shape[0] if lookup is None else max(src.shape[0], lookup.shape[0])
-    results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
-        delayed(unwrap_and_quilt_seamless)(
-            wrapped_func,
-            src[min(i, src.shape[0] - 1)],
-            lookup[min(i, lookup.shape[0] - 1)]
-            if lookup is not None else None,
-            i, is_latent) for i in range(number_of_processes))
-    return torch.stack(results)
-
-
-def validate_gen_args(source, block_size):
-    validate_array_shape(source, min_height=block_size, min_width=block_size,
-                         help_msg="Change the block size.")
-
-
 def validate_seamless_args(orientation, source, lookup, block_size, overlap):
     if overlap * 2 > block_size:
         raise ValueError(f"Overlap ({overlap}) needs to be 50% or less of the block size ({block_size}).")
@@ -316,31 +232,6 @@ def validate_seamless_args(orientation, source, lookup, block_size, overlap):
 # region NODES
 
 class ImageQuilting:
-    class ImageQuiltingFuncWrapper(QuiltingFuncWrapper):
-        """Wraps node functionality for easy re-use when using jobs."""
-
-        def __call__(self, image, job_id):
-            if self.version == 2:
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
-
-            block_size = self.block_sizes[job_id]
-            overlap = overlap_percentage_to_pixels(block_size, self.overlap)
-            validate_gen_args(image, block_size)
-            gen_args = GenParams(block_size, overlap, self.tolerance, self.blend_into_patch, self.version)
-
-            if self.parallelization_lvl == 0:
-                result = generate_texture(image, gen_args, self.out_h, self.out_w,
-                                          self.rng, UiCoordData(self.jobs_shm_name, job_id))
-            else:
-                result = generate_texture_parallel(
-                    image, gen_args, self.out_h, self.out_w,
-                    self.parallelization_lvl, self.rng, UiCoordData(self.jobs_shm_name, job_id))
-
-            if self.version == 2:
-                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
-
-            return result
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -349,8 +240,7 @@ class ImageQuilting:
                 # can be a single image or a batch of images
                 # using an image batch limits max parallelization lvl to 1 ( values above are ignored ).
 
-                # self explanatory
-                "scale": ("FLOAT", {"default": 4, "min": 2, "max": 32, "step": .1}),
+                "scale": ("FLOAT", {"default": 4, "min": 2, "max": 32, "step": .1}),  # self-explanatory
 
                 **get_quilting_shared_input_types()
             }
@@ -374,42 +264,19 @@ class ImageQuilting:
             setup_pbar_quilting(block_sizes, overlap, out_h, out_w, parallelization_lvl)
 
         try:
-            func = self.ImageQuiltingFuncWrapper(
+            func = QuiltingFuncWrapper(False,
                 block_sizes, overlap, out_h, out_w, tolerance,
                 parallelization_lvl, rng, blend_into_patch, version, shm_name)
 
             is_batch = src.shape[0] > 1
-            output = self.batch_using_jobs(func, src) if is_batch else unwrap_and_quilt(func, src, 0)
+            output = batch_using_jobs(func, src, is_latent=False) if is_batch\
+                else unwrap_latent_and_quilt(func, src, is_latent=False)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
 
-    @staticmethod
-    def batch_using_jobs(wrapped_func, src):
-        from joblib import Parallel, delayed
-        results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
-            delayed(unwrap_and_quilt)(wrapped_func, src[i], i) for i in range(src.shape[0]))
-        return torch.stack(results)
-
 
 class LatentQuilting:
-    class LatentQuiltingFuncWrapper(QuiltingFuncWrapper):
-        """Wraps node functionality for easy re-use when using jobs."""
-
-        def __call__(self, latent_image, job_id):
-            block_size = self.block_sizes[job_id]
-            overlap = overlap_percentage_to_pixels(block_size, self.overlap)
-            validate_gen_args(latent_image, block_size)
-            gen_args = GenParams(block_size, overlap, self.tolerance, self.blend_into_patch, self.version)
-
-            if self.parallelization_lvl == 0:
-                return generate_texture(latent_image, gen_args, self.out_h, self.out_w,
-                                        self.rng, UiCoordData(self.jobs_shm_name, job_id))
-            else:
-                return generate_texture_parallel(
-                    latent_image, gen_args, self.out_h, self.out_w,
-                    self.parallelization_lvl, self.rng, UiCoordData(self.jobs_shm_name, job_id))
-
     @classmethod
     def INPUT_TYPES(cls):
         shared_inputs = get_quilting_shared_input_types()
@@ -446,60 +313,20 @@ class LatentQuilting:
             setup_pbar_quilting(block_sizes, overlap, out_h, out_w, parallelization_lvl)
 
         try:
-            func = self.LatentQuiltingFuncWrapper(
+            func = QuiltingFuncWrapper(True,
                 block_sizes, overlap, out_h, out_w, tolerance, parallelization_lvl,
                 rng, blend_into_patch, version, shm_name)
 
             is_batch = src.shape[0] > 1
-            output = self.batch_using_jobs(func, src) if is_batch else \
-                unwrap_and_quilt(func, src, 0, is_latent=True)
+            output = batch_using_jobs(func, src, is_latent=True) if is_batch else \
+                unwrap_latent_and_quilt(func, src, is_latent=True)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return ({"samples": output},)
 
-    @staticmethod
-    def batch_using_jobs(wrapped_func, src):
-        from joblib import Parallel, delayed
-        results = Parallel(n_jobs=-1, backend="loky", timeout=None)(
-            delayed(unwrap_and_quilt)(wrapped_func, src[i], i, True) for i in range(src.shape[0]))
-        return torch.stack(results)
-
 
 class ImageMakeSeamlessMB:
     """Transition stripe is built using overlapping square patches."""
-
-    @dataclass
-    class SeamlessFuncWrapper(SeamlessFuncWrapper):
-        block_sizes: list[int]
-        tolerance: float
-
-        def __call__(self, image, lookup, job_id):
-            from .make_seamless import make_seamless_horizontally, make_seamless_vertically, make_seamless_both
-
-            block_size = self.block_sizes[min(job_id, len(self.block_sizes) - 1)]
-            overlap = overlap_percentage_to_pixels(block_size, self.overlap)
-            gen_args = GenParams(block_size, overlap, self.tolerance, self.blend_into_patch, self.version)
-
-            if self.version == 2:
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
-                if lookup is not None:
-                    lookup = cv2.cvtColor(lookup, cv2.COLOR_RGB2Lab) if lookup is not None else None
-
-            match self.ori:
-                case "H":
-                    func = make_seamless_horizontally
-                case "V":
-                    func = make_seamless_vertically
-                case ___:
-                    func = make_seamless_both
-
-            validate_seamless_args(self.ori, image, lookup, block_size, overlap)
-            result = func(image, gen_args, self.rng, lookup, UiCoordData(self.jobs_shm_name, job_id))
-
-            if self.version == 2:
-                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
-
-            return result
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -535,12 +362,12 @@ class ImageMakeSeamlessMB:
             ori, block_sizes, overlap, h, w, max(src.shape[0], lookup_batch_size))
 
         try:
-            func = self.SeamlessFuncWrapper(
-                ori, overlap, rng, blend_into_patch, version, shm_name, block_sizes, tolerance)
+            func = SeamlessMPFuncWrapper(
+                False, ori, overlap, rng, blend_into_patch, version, shm_name, block_sizes, tolerance)
 
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
             output = batch_seamless_using_jobs(func, src, lookup, is_latent=False) if is_batch else \
-                unwrap_and_quilt_seamless(func, src, lookup, 0)
+                unwrap_latent_and_quilt_seamless(func, src, lookup, 0)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
@@ -548,38 +375,6 @@ class ImageMakeSeamlessMB:
 
 class ImageMakeSeamlessSB:
     """Transition stripe is built via a single rectangular block."""
-
-    @dataclass
-    class SeamlessFuncWrapper(SeamlessFuncWrapper):
-        block_sizes: list[int]
-
-        def __call__(self, image, lookup, job_id):
-            from .make_seamless2 import seamless_horizontal, seamless_vertical, seamless_both
-
-            block_size = self.block_sizes[min(job_id, len(self.block_sizes) - 1)]
-            overlap = overlap_percentage_to_pixels(block_size, self.overlap)
-            gen_args = GenParams(block_size, overlap, 0, self.blend_into_patch, self.version)
-
-            if self.version == 2:
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
-                if lookup is not None:
-                    lookup = cv2.cvtColor(lookup, cv2.COLOR_RGB2Lab) if lookup is not None else None
-
-            match self.ori:
-                case "H":
-                    func = seamless_horizontal
-                case "V":
-                    func = seamless_vertical
-                case ___:
-                    func = seamless_both
-
-            validate_seamless_args(self.ori, image, lookup, block_size, overlap)
-            result = func(image, lookup, gen_args, self.rng, UiCoordData(self.jobs_shm_name, job_id))
-
-            if self.version == 2:
-                result = cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
-
-            return result
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -616,12 +411,12 @@ class ImageMakeSeamlessSB:
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))
 
         try:
-            func = self.SeamlessFuncWrapper(
-                ori, overlap, rng, blend_into_patch, version, shm_name, block_sizes)
+            func = SeamlessSPFuncWrapper(
+                False, ori, overlap, rng, blend_into_patch, version, shm_name, block_sizes)
 
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
             output = batch_seamless_using_jobs(func, src, lookup, is_latent=False) if is_batch else \
-                unwrap_and_quilt_seamless(func, src, lookup, 0)
+                unwrap_latent_and_quilt_seamless(func, src, lookup, 0)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return (output,)
@@ -647,28 +442,6 @@ class GuessNiceBlockSize:
 
 class LatentMakeSeamlessMB:
     """Transition stripe is built using overlapping square patches."""
-
-    @dataclass
-    class SeamlessFuncWrapper(SeamlessFuncWrapper):
-        block_size: int
-        tolerance: float
-
-        def __call__(self, latent, lookup, job_id):
-            from .make_seamless import make_seamless_horizontally, make_seamless_vertically, make_seamless_both
-
-            match self.ori:
-                case "H":
-                    func = make_seamless_horizontally
-                case "V":
-                    func = make_seamless_vertically
-                case ___:
-                    func = make_seamless_both
-
-            overlap = overlap_percentage_to_pixels(self.block_size, self.overlap)
-            validate_seamless_args(self.ori, latent, lookup, self.block_size, overlap)
-            gen_args = GenParams(self.block_size, overlap, self.tolerance, self.blend_into_patch, self.version)
-
-            return func(latent, gen_args, self.rng, lookup, UiCoordData(self.jobs_shm_name, job_id))
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -703,12 +476,12 @@ class LatentMakeSeamlessMB:
             ori, [block_size] * src.shape[0], overlap, h, w, max(src.shape[0], lookup_batch_size))
 
         try:
-            func = self.SeamlessFuncWrapper(
-                ori, overlap, rng, blend_into_patch, version, shm_name, block_size, tolerance)
+            func = SeamlessMPFuncWrapper(
+                True, ori, overlap, rng, blend_into_patch, version, shm_name, [block_size], tolerance)
 
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
             output = batch_seamless_using_jobs(func, src, lookup, is_latent=True) if is_batch else \
-                unwrap_and_quilt_seamless(func, src, lookup, 0, is_latent=True)
+                unwrap_latent_and_quilt_seamless(func, src, lookup, 0, is_latent=True)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return ({"samples": output},)
@@ -716,26 +489,6 @@ class LatentMakeSeamlessMB:
 
 class LatentMakeSeamlessSB:
     """Transition stripe is built using overlapping square patches."""
-
-    @dataclass
-    class SeamlessFuncWrapper(SeamlessFuncWrapper):
-        block_size: int
-
-        def __call__(self, latent, lookup, job_id):
-            from .make_seamless2 import seamless_horizontal, seamless_vertical, seamless_both
-
-            match self.ori:
-                case "H":
-                    func = seamless_horizontal
-                case "V":
-                    func = seamless_vertical
-                case ___:
-                    func = seamless_both
-
-            overlap = overlap_percentage_to_pixels(self.block_size, self.overlap)
-            validate_seamless_args(self.ori, latent, lookup, self.block_size, overlap)
-            gen_args = GenParams(self.block_size, overlap, 0, self.blend_into_patch, self.version)
-            return func(latent, lookup, gen_args, self.rng, UiCoordData(self.jobs_shm_name, job_id))
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -768,11 +521,11 @@ class LatentMakeSeamlessSB:
         finish_event, t, shm_name, shm_jobs = setup_pbar_seamless_v2(ori, max(src.shape[0], lookup_batch_size))
 
         try:
-            func = self.SeamlessFuncWrapper(ori, overlap, rng, blend_into_patch, version, shm_name, block_size)
+            func = SeamlessSPFuncWrapper(True, ori, overlap, rng, blend_into_patch, version, shm_name, [block_size])
 
             is_batch = src.shape[0] > 1 or lookup_batch_size > 1
             output = batch_seamless_using_jobs(func, src, lookup, is_latent=True) if is_batch else \
-                unwrap_and_quilt_seamless(func, src, lookup, 0, is_latent=True)
+                unwrap_latent_and_quilt_seamless(func, src, lookup, 0, is_latent=True)
         finally:
             terminate_task(finish_event, shm_jobs, t)
         return ({"samples": output},)
